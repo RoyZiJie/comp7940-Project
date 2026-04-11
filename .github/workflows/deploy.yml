@@ -85,7 +85,8 @@ jobs:
           python -c "
           import sys
           try:
-              from rag_engine import retrieve_context, generate_prompt, extract_answer
+              from rag_engine import retrieve_context, generate_prompt, extract_answer, nodes
+
               
               # Test keyword retrieval
               test_query = 'Computer Science courses'
