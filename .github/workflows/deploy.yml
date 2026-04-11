@@ -217,14 +217,7 @@ jobs:
       - name: Build Docker image
         run: |
           echo "🔨 Building Docker image..."
-          docker build -t hkbu-buddy-bot:${{ github.sha }} \
-            --cache-from type=local,src=/tmp/.buildx-cache \
-            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
-            .
-          
-          # Move cache
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+          docker build -t hkbu-buddy-bot:${{ github.sha }} .
           
           echo "✅ Docker image built successfully"
           docker images hkbu-buddy-bot
