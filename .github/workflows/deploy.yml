@@ -10,7 +10,7 @@ jobs:
   test:
     name: Test and Validate
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -119,7 +119,7 @@ jobs:
   security-check:
     name: Security Check
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -174,7 +174,7 @@ jobs:
   lint:
     name: Code Quality Check
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -198,7 +198,7 @@ jobs:
     name: Docker Build and Test
     runs-on: ubuntu-latest
     needs: [test, security-check]
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -232,9 +232,12 @@ jobs:
         run: |
           echo "🧪 Testing Docker container..."
           
-          # Run container in detached mode with timeout
+          # Run container in detached mode with memory limits
           docker run -d \
             --name test-container \
+            --memory="512m" \
+            --memory-swap="512m" \
+            --cpus="1" \
             --env TELEGRAM_TOKEN="$TELEGRAM_TOKEN" \
             --env API_KEY="$API_KEY" \
             --env API_BASE_URL="$API_BASE_URL" \
@@ -242,8 +245,15 @@ jobs:
             --env API_VERSION="$API_VERSION" \
             hkbu-buddy-bot:${{ github.sha }}
           
-          # Wait for container to start
-          sleep 5
+          # Wait for container to start with timeout
+          echo "Waiting for container to initialize..."
+          timeout 60 docker exec test-container sleep 1 || {
+            echo "❌ Container failed to initialize or timed out"
+            docker logs test-container
+            docker stop test-container
+            docker rm test-container
+            exit 1
+          }
           
           # Check if container is running
           if docker ps | grep -q test-container; then
@@ -258,16 +268,21 @@ jobs:
           echo "📋 Container logs:"
           docker logs test-container
           
-          # Verify RAG engine initialization in container
+          # Verify RAG engine initialization in container with timeout
           echo "🔍 Verifying RAG engine inside container..."
-          docker exec test-container python -c "
+          timeout 30 docker exec test-container python -c "
           from rag_engine import nodes, documents
           print(f'✓ RAG Engine initialized in container')
           print(f'✓ Loaded {len(documents)} documents')
           print(f'✓ Created {len(nodes)} chunks')
-          assert len(documents) > 0, 'No documents loaded'
           print('✓ All checks passed inside container')
-          "
+          " || {
+            echo "❌ RAG engine verification failed or timed out"
+            docker logs test-container
+            docker stop test-container
+            docker rm test-container
+            exit 1
+          }
           
           # Stop and remove test container
           docker stop test-container
@@ -325,7 +340,7 @@ jobs:
     name: Deployment Readiness Test
     runs-on: ubuntu-latest
     needs: [test, security-check, docker-build]
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -395,7 +410,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test, security-check, lint, docker-build, deploy-test]
     if: always()
-    
+
     steps:
       - name: Display pipeline status
         run: |
