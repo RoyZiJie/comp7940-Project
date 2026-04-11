@@ -121,7 +121,7 @@ async def handle_message(update: Update, context):
         # 3. Call LLM API - temperature must be 1.0 for GPT-5
         response = complete_document_sdk(
             prompt=prompt,
-            temperature=1.0  # Changed from 0.0 to 1.0
+            temperature=1.0
         )
 
         answer = extract_answer(response.get("response", ""))
@@ -136,8 +136,12 @@ async def handle_message(update: Update, context):
             if sources:
                 answer += f"\n\n📖 *Sources:* {', '.join(sources)}"
 
-        # Send reply
-        await update.message.reply_text(answer, parse_mode="Markdown")
+        # Send reply - try Markdown first, fallback to plain text
+        try:
+            await update.message.reply_text(answer, parse_mode="Markdown")
+        except Exception as e:
+            print(f"Markdown parse error: {e}, sending plain text")
+            await update.message.reply_text(answer)
 
     except Exception as e:
         print(f"Error: {e}")
