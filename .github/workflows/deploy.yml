@@ -290,13 +290,36 @@ jobs:
           
           echo "✅ Vulnerability scan completed"
 
-      - name: Tag Docker image
+      - name: Login to GitHub Container Registry
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag and Push Docker image
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         run: |
           echo "🏷️ Tagging Docker image..."
-          docker tag hkbu-buddy-bot:${{ github.sha }} hkbu-buddy-bot:latest
-          docker tag hkbu-buddy-bot:${{ github.sha }} hkbu-buddy-bot:${{ github.run_number }}
-          echo "✅ Image tagged as latest and build ${{ github.run_number }}"
+          
+          # 转换为小写(GHCR要求)
+          IMAGE_NAME=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          
+          # 标记为latest和版本号
+          docker tag hkbu-buddy-bot:${{ github.sha }} $IMAGE_NAME:latest
+          docker tag hkbu-buddy-bot:${{ github.sha }} $IMAGE_NAME:${{ github.run_number }}
+          docker tag hkbu-buddy-bot:${{ github.sha }} $IMAGE_NAME:${{ github.sha }}
+          
+          echo "📤 Pushing images to GitHub Container Registry..."
+          docker push $IMAGE_NAME:latest
+          docker push $IMAGE_NAME:${{ github.run_number }}
+          docker push $IMAGE_NAME:${{ github.sha }}
+          
+          echo "✅ Images pushed successfully!"
+          echo "   - $IMAGE_NAME:latest"
+          echo "   - $IMAGE_NAME:${{ github.run_number }}"
+          echo "   - $IMAGE_NAME:${{ github.sha }}"
 
   deploy-test:
     name: Deployment Readiness Test
