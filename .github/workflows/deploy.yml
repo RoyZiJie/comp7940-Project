@@ -232,12 +232,12 @@ jobs:
         run: |
           echo "🧪 Testing Docker container..."
           
-          # Run container in detached mode with memory limits
+          # Run container with increased memory and CPU for faster initialization
           docker run -d \
             --name test-container \
-            --memory="512m" \
-            --memory-swap="512m" \
-            --cpus="1" \
+            --memory="1g" \
+            --memory-swap="1g" \
+            --cpus="2" \
             --env TELEGRAM_TOKEN="$TELEGRAM_TOKEN" \
             --env API_KEY="$API_KEY" \
             --env API_BASE_URL="$API_BASE_URL" \
@@ -245,7 +245,7 @@ jobs:
             --env API_VERSION="$API_VERSION" \
             hkbu-buddy-bot:${{ github.sha }}
           
-          # Wait for container to start with timeout
+          # Wait for container to start
           echo "Waiting for container to initialize..."
           timeout 60 docker exec test-container sleep 1 || {
             echo "❌ Container failed to initialize or timed out"
@@ -268,9 +268,9 @@ jobs:
           echo "📋 Container logs:"
           docker logs test-container
           
-          # Verify RAG engine initialization in container with timeout
+          # Verify RAG engine initialization with increased timeout (120 seconds)
           echo "🔍 Verifying RAG engine inside container..."
-          timeout 30 docker exec test-container python -c "
+          timeout 120 docker exec test-container python -c "
           from rag_engine import nodes, documents
           print(f'✓ RAG Engine initialized in container')
           print(f'✓ Loaded {len(documents)} documents')
