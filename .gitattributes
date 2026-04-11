@@ -1,0 +1,35 @@
+# 自动检测文本文件的换行符
+* text=auto
+
+# Python文件使用LF换行符(跨平台标准)
+*.py text eol=lf
+*.txt text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.cfg text eol=lf
+*.ini text eol=lf
+*.toml text eol=lf
+
+# Shell脚本使用LF
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Windows批处理文件使用CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制文件不进行换行符转换
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.exe binary
+*.dll binary
+*.so binary
+*.pyd binary
+*.zip binary
+*.tar.gz binary

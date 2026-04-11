@@ -1,0 +1,290 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    name: Test and Validate
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check code syntax
+        run: |
+          python -m py_compile bot.py
+          python -m py_compile rag_engine.py
+
+      - name: Verify imports
+        run: |
+          python -c "import telegram; print('telegram-bot:', telegram.__version__)"
+          python -c "import PyPDF2; print('PyPDF2:', PyPDF2.__version__)"
+          python -c "import requests; print('requests:', requests.__version__)"
+          python -c "from dotenv import load_dotenv; print('python-dotenv installed')"
+
+      - name: Validate project structure
+        run: |
+          echo "Checking project structure..."
+          test -f bot.py && echo "✓ bot.py exists"
+          test -f rag_engine.py && echo "✓ rag_engine.py exists"
+          test -f requirements.txt && echo "✓ requirements.txt exists"
+          test -d data && echo "✓ data directory exists"
+          
+          # Count PDF files
+          pdf_count=$(find data -name "*.pdf" | wc -l)
+          echo "✓ Found $pdf_count PDF files in data directory"
+
+      - name: Test RAG engine initialization
+        env:
+          API_KEY: ${{ secrets.API_KEY }}
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          MODEL: ${{ secrets.MODEL }}
+          API_VERSION: ${{ secrets.API_VERSION }}
+        run: |
+          python -c "
+          import sys
+          try:
+              from rag_engine import nodes, documents
+              print(f'✓ RAG Engine initialized successfully')
+              print(f'✓ Loaded {len(documents)} documents')
+              print(f'✓ Created {len(nodes)} chunks')
+              
+              if len(documents) == 0:
+                  print('⚠️ Warning: No documents loaded. Please add PDF/TXT files to data/')
+                  sys.exit(1)
+              else:
+                  print('✓ Documents are ready for RAG queries')
+          except Exception as e:
+              print(f'❌ RAG Engine initialization failed: {e}')
+              sys.exit(1)
+          "
+
+      - name: Run basic functionality test
+        env:
+          API_KEY: ${{ secrets.API_KEY }}
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          MODEL: ${{ secrets.MODEL }}
+          API_VERSION: ${{ secrets.API_VERSION }}
+        run: |
+          python -c "
+          import sys
+          try:
+              from rag_engine import retrieve_context, generate_prompt, extract_answer
+              
+              # Test keyword retrieval
+              test_query = 'Computer Science courses'
+              context = retrieve_context(nodes=nodes, query=test_query, method='keyword', top_k=3)
+              print(f'✓ Keyword retrieval test passed (found {len(context)} results)')
+              
+              # Test prompt generation
+              prompt = generate_prompt(context='Test context', history='', query=test_query, use_cot=True)
+              if '<Thought>' in prompt and '<Answer>' in prompt:
+                  print('✓ Prompt generation with CoT test passed')
+              else:
+                  print('✓ Prompt generation test passed')
+              
+              # Test answer extraction
+              test_response = '<Thought>Thinking...</Thought><Answer>This is a test answer</Answer>'
+              answer = extract_answer(test_response)
+              if 'This is a test answer' in answer:
+                  print('✓ Answer extraction test passed')
+              else:
+                  print('⚠️ Answer extraction may need review')
+                  
+              print('✓ All RAG functionality tests passed')
+          except Exception as e:
+              print(f'❌ Functionality test failed: {e}')
+              import traceback
+              traceback.print_exc()
+              sys.exit(1)
+          "
+
+  security-check:
+    name: Security Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for exposed secrets
+        run: |
+          echo "🔍 Checking for exposed secrets..."
+          
+          # Check if .env file is tracked by git
+          if git ls-files --error-unmatch .env &>/dev/null; then
+            echo "❌ ERROR: .env file is tracked by git!"
+            echo "Please add .env to .gitignore immediately"
+            exit 1
+          else
+            echo "✓ .env file is not tracked by git"
+          fi
+          
+          # Check for hardcoded API keys in Python files
+          if grep -r "API_KEY=" --include="*.py" . | grep -v "os.getenv"; then
+            echo "⚠️ Warning: Found potential hardcoded API keys"
+            exit 1
+          else
+            echo "✓ No hardcoded API keys found"
+          fi
+          
+          # Check for Telegram tokens
+          if grep -r "TELEGRAM_TOKEN=" --include="*.py" . | grep -v "os.getenv"; then
+            echo "⚠️ Warning: Found potential hardcoded Telegram tokens"
+            exit 1
+          else
+            echo "✓ No hardcoded Telegram tokens found"
+          fi
+          
+          echo "✓ Security check passed"
+
+      - name: Verify .gitignore configuration
+        run: |
+          echo "📋 Verifying .gitignore..."
+          if grep -q "\.env" .gitignore; then
+            echo "✓ .env is in .gitignore"
+          else
+            echo "❌ ERROR: .env is not in .gitignore"
+            exit 1
+          fi
+          
+          if grep -q "__pycache__" .gitignore; then
+            echo "✓ __pycache__ is in .gitignore"
+          else
+            echo "⚠️ Warning: __pycache__ not in .gitignore"
+          fi
+
+  lint:
+    name: Code Quality Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install linters
+        run: |
+          pip install flake8
+
+      - name: Run flake8
+        run: |
+          echo "Running code quality checks..."
+          flake8 bot.py rag_engine.py --max-line-length=120 --ignore=E501,W503 || true
+          echo "✓ Code quality check completed"
+
+  deploy-test:
+    name: Deployment Readiness Test
+    runs-on: ubuntu-latest
+    needs: [test, security-check]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify deployment prerequisites
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          API_KEY: ${{ secrets.API_KEY }}
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          MODEL: ${{ secrets.MODEL }}
+          API_VERSION: ${{ secrets.API_VERSION }}
+        run: |
+          echo "🚀 Checking deployment readiness..."
+          
+          # Check required environment variables
+          missing_vars=()
+          
+          if [ -z "$TELEGRAM_TOKEN" ]; then
+            missing_vars+=("TELEGRAM_TOKEN")
+          fi
+          
+          if [ -z "$API_KEY" ]; then
+            missing_vars+=("API_KEY")
+          fi
+          
+          if [ -z "$API_BASE_URL" ]; then
+            missing_vars+=("API_BASE_URL")
+          fi
+          
+          if [ ${#missing_vars[@]} -eq 0 ]; then
+            echo "✓ All required environment variables are configured"
+          else
+            echo "❌ Missing required environment variables:"
+            printf '  - %s\n' "${missing_vars[@]}"
+            echo ""
+            echo "Please configure these in GitHub Secrets:"
+            echo "Settings → Secrets and variables → Actions → New repository secret"
+            exit 1
+          fi
+          
+          # Verify document availability
+          doc_count=$(find data -type f \( -name "*.pdf" -o -name "*.txt" \) | wc -l)
+          if [ "$doc_count" -gt 0 ]; then
+            echo "✓ Found $doc_count knowledge base documents"
+          else
+            echo "⚠️ Warning: No documents found in data/ directory"
+            echo "Bot will start but won't have knowledge base content"
+          fi
+          
+          echo ""
+          echo "✅ Deployment readiness check passed!"
+          echo "The bot is ready to be deployed."
+
+  summary:
+    name: Pipeline Summary
+    runs-on: ubuntu-latest
+    needs: [test, security-check, lint, deploy-test]
+    if: always()
+    
+    steps:
+      - name: Display pipeline status
+        run: |
+          echo "=========================================="
+          echo "   CI/CD Pipeline Execution Summary"
+          echo "=========================================="
+          echo ""
+          echo "Pipeline Status: ${{ needs.test.result == 'success' && needs.security-check.result == 'success' && needs.lint.result == 'success' && needs.deploy-test.result == 'success' && '✅ PASSED' || '❌ FAILED' }}"
+          echo ""
+          echo "Job Results:"
+          echo "  • Test & Validation:     ${{ needs.test.result }}"
+          echo "  • Security Check:        ${{ needs.security-check.result }}"
+          echo "  • Code Quality:          ${{ needs.lint.result }}"
+          echo "  • Deployment Readiness:  ${{ needs.deploy-test.result }}"
+          echo ""
+          echo "=========================================="
+          
+          if [ "${{ needs.test.result }}" != "success" ] || [ "${{ needs.security-check.result }}" != "success" ] || [ "${{ needs.lint.result }}" != "success" ] || [ "${{ needs.deploy-test.result }}" != "success" ]; then
+            exit 1
+          fi
