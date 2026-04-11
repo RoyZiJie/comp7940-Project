@@ -327,15 +327,20 @@ async def handle_message(update: Update, context):
         )
 
 
-async def main():
-    """Main function"""
+def main():
+    """Main function - fixed asyncio issue"""
     if not TELEGRAM_TOKEN:
         print("❌ Error: TELEGRAM_TOKEN not found")
         print("Please set TELEGRAM_TOKEN in .env file")
         return
 
-    # Initialize database
-    await init_db()
+    # Initialize database (run async function)
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(init_db())
+    except Exception as e:
+        print(f"Database init warning: {e}")
 
     # Create application
     app = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -351,9 +356,9 @@ async def main():
     print("📱 Search for @HKBU_buddy_bot on Telegram to start using")
     print("Press Ctrl+C to stop")
 
-    # Start the bot
+    # Start the bot (this is blocking)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
