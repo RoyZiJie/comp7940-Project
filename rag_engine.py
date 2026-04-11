@@ -1,85 +1,137 @@
 import os
+import requests
+import PyPDF2
 from typing import List, Dict, Any
-import ollama
-from llama_index.core import (
-    SimpleDirectoryReader,
-    VectorStoreIndex,
-    StorageContext,
-    load_index_from_storage
-)
-from llama_index.core.node_parser import SentenceSplitter
-from llama_index.embeddings.ollama import OllamaEmbedding
-from llama_index.core import Settings
+from dotenv import load_dotenv
 
-# ====================== 全局配置 ======================
-LLM_MODEL = "gemma3:4b"
-EMBED_MODEL = "embeddinggemma"
+load_dotenv()
+
+# ====================== Global Configuration ======================
+# HKBU GenAI Platform Configuration
+API_KEY = os.getenv("API_KEY")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://genai.hkbu.edu.hk/api/v0/rest")
+MODEL = os.getenv("MODEL", "gpt-5")
+API_VERSION = os.getenv("API_VERSION", "2024-12-01-preview")
+
 CHUNK_SIZE = 512
 CHUNK_OVERLAP = 128
 STORAGE_DIR = "./storage"
 DATA_DIR = "./data"
 
-#全局使用 Ollama 本地嵌入
-Settings.embed_model = OllamaEmbedding(model_name=EMBED_MODEL)
 
-# ====================== 文档加载与分块 ======================
-def load_all_documents(data_dir: str = DATA_DIR) -> List:
+# ====================== Document Loading & Chunking ======================
+def load_all_documents(data_dir: str = DATA_DIR):
+    """Load all txt and pdf files from the data directory"""
+    documents = []
     if not os.path.exists(data_dir):
         os.makedirs(data_dir)
-    print("📂 Loading documents...")
-    documents = SimpleDirectoryReader(data_dir).load_data()
+        print(f"📁 Created data directory: {data_dir}")
+        print("⚠️ Please put HKBU related documents (.txt or .pdf) into data/ folder")
+        return documents
+
+    # Read all files
+    for filename in os.listdir(data_dir):
+        file_path = os.path.join(data_dir, filename)
+
+        # Read .txt files
+        if filename.endswith('.txt'):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                documents.append({
+                    "file_name": filename,
+                    "content": content
+                })
+                print(f"📄 Loaded document: {filename} ({len(content)} characters)")
+
+        # Read .pdf files
+        elif filename.endswith('.pdf'):
+            try:
+                with open(file_path, 'rb') as f:
+                    reader = PyPDF2.PdfReader(f)
+                    content = ''
+                    for page in reader.pages:
+                        content += page.extract_text()
+                    if content.strip():
+                        documents.append({
+                            "file_name": filename,
+                            "content": content
+                        })
+                        print(f"📄 Loaded PDF: {filename} ({len(content)} characters)")
+                    else:
+                        print(f"⚠️ No text extracted from PDF: {filename} (may be scanned)")
+            except Exception as e:
+                print(f"❌ Error reading PDF {filename}: {e}")
+
     return documents
 
-def chunk_documents(documents: List) -> List:
-    parser = SentenceSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
-    nodes = parser.get_nodes_from_documents(documents)
-    print(f"✅ Parsed {len(documents)} docs → {len(nodes)} chunks. Launching GUI...")
+
+def chunk_documents(documents: List, chunk_size: int = CHUNK_SIZE):
+    """Split long documents into smaller chunks"""
+    nodes = []
+    for doc in documents:
+        content = doc["content"]
+        # Split by chunk_size
+        for i in range(0, len(content), chunk_size):
+            chunk = content[i:i + chunk_size]
+            if chunk.strip():
+                nodes.append({
+                    "file_name": doc["file_name"],
+                    "content": chunk
+                })
+    print(f"✅ Loaded {len(documents)} documents → {len(nodes)} chunks")
     return nodes
 
-documents = SimpleDirectoryReader("data", recursive=True).load_data()
+
+# Load documents and create chunks
+documents = load_all_documents(DATA_DIR)
 nodes = chunk_documents(documents)
 
-# ====================== 向量索引 ======================
-def load_or_create_index(nodes: List, persist_dir: str = STORAGE_DIR) -> VectorStoreIndex:
-    if os.path.exists(persist_dir) and len(os.listdir(persist_dir)) > 0:
-        try:
-            storage_context = StorageContext.from_defaults(persist_dir=persist_dir)
-            index = load_index_from_storage(storage_context)
-            print("✅ 本地索引加载成功！")
-            return index
-        except Exception as e:
-            print(f"⚠️ 索引加载失败，重新创建...")
 
-    print("Creating index...This may take a while...")
-    index = VectorStoreIndex(nodes)
-    index.storage_context.persist(persist_dir=persist_dir)
-    print("✅ 新索引创建完成！")
-    return index
-
-# ====================== 检索 ======================
+# ====================== Keyword Retrieval ======================
 def retrieve_context(
-    nodes: List,
-    query: str,
-    method: str = "neural",
-    top_k: int = 1000,
-    neural_threshold: float = 0.3
+        nodes: List,
+        query: str,
+        method: str = "keyword",
+        top_k: int = 5
 ) -> List[Dict]:
-    try:
-        index = load_or_create_index(nodes)
-        retriever = index.as_retriever(similarity_top_k=top_k)
-        results = retriever.retrieve(query)
-        return [
-            {
-                "file_name": node.metadata.get("file_name", "unknown"),
-                "content": node.get_content()
-            }
-            for node in results
-        ]
-    except:
+    """Retrieve relevant document chunks based on keyword matching"""
+    if not nodes:
         return []
 
-# ====================== 提示词 ======================
+    # Split query into keywords
+    query_words = set(query.lower().split())
+
+    # Filter common stop words
+    stop_words = {"的", "了", "是", "在", "我", "有", "和", "就", "不", "也", "都", "说",
+                  "a", "an", "the", "is", "are", "was", "were", "to", "of", "and", "or",
+                  "in", "on", "at", "for", "with", "by"}
+    query_words = query_words - stop_words
+
+    if not query_words:
+        return []
+
+    # Calculate match score for each chunk
+    scored_nodes = []
+    for node in nodes:
+        content_lower = node["content"].lower()
+        score = 0
+        for word in query_words:
+            if word in content_lower:
+                score += 1
+        if score > 0:
+            scored_nodes.append((score, node))
+
+    # Sort by score and take top_k
+    scored_nodes.sort(key=lambda x: x[0], reverse=True)
+    results = [node for score, node in scored_nodes[:top_k]]
+
+    print(f"🔍 Retrieved {len(results)} relevant chunks")
+    return results
+
+
+# ====================== Prompt Generation ======================
 def generate_prompt(context: str, history: str, query: str, use_cot: bool = True) -> str:
+    """Generate the prompt to send to LLM"""
     cot_instruction = ""
     if use_cot:
         cot_instruction = """
@@ -88,8 +140,7 @@ Then give your final answer inside <Answer> tags.
 Keep your answer clear and concise.
 """
 
-    return f"""
-You are a helpful HKBU study assistant. Answer based on the context below.
+    return f"""You are a helpful HKBU study assistant. Answer based on the context below.
 
 Context:
 {context}
@@ -100,10 +151,13 @@ Conversation History:
 User: {query}
 
 {cot_instruction}
-"""
 
-# ====================== 查询重写 ======================
+Assistant:"""
+
+
+# ====================== Query Rewriting ======================
 def rewrite_query(query: str, history: str):
+    """Rewrite query to be standalone based on conversation history"""
     if not history.strip():
         return query, {
             "prompt_tokens": 0,
@@ -116,82 +170,198 @@ History: {history}
 Question: {query}
 Standalone Question:"""
 
-    res = complete_document_sdk(prompt=prompt, temperature=0.0, stop_sequences=["\n"])
+    # Changed temperature from 0.0 to 1.0
+    res = complete_document_sdk(prompt=prompt, temperature=1.0)
     rewritten = res["response"].strip()
+    # Clean up newlines
+    rewritten = rewritten.split('\n')[0] if '\n' in rewritten else rewritten
     return rewritten if rewritten else query, res
 
-# ====================== LLM 调用 ======================
+
+# ====================== HKBU GenAI Platform API Call ======================
 def complete_document_sdk(
-    prompt: str,
-    model: str = LLM_MODEL,
-    num_predict: int = 2048,
-    temperature: float = 0.0,
-    stop_sequences: List[str] = None,
-    stream_callback=None
+        prompt: str,
+        model: str = None,
+        num_predict: int = 2048,
+        temperature: float = 1.0,  # Changed from 0.0 to 1.0
+        stop_sequences: List[str] = None,
+        stream_callback=None
 ) -> Dict[str, Any]:
-    if stop_sequences is None:
-        stop_sequences = ["</Thought>", "</Answer>"]
+    """Call HKBU GenAI Platform API (GPT-5) using Azure OpenAI format"""
 
-    full_response = ""
-    prompt_tokens = 0
-    completion_tokens = 0
+    if not API_KEY:
+        return {
+            "response": "Error: API_KEY not set in .env file. Please add your API key.",
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0
+        }
 
-    try:
-        response = ollama.generate(
-            model=model,
-            prompt=prompt,
-            stream=True,
-            options={
-                "num_predict": num_predict,
-                "temperature": temperature,
-                "stop": stop_sequences
-            }
-        )
+    model_name = model or MODEL
 
-        for chunk in response:
-            content = chunk.get("response", "")
-            full_response += content
-            if "prompt_eval_count" in chunk:
-                prompt_tokens = chunk["prompt_eval_count"]
-            if "eval_count" in chunk:
-                completion_tokens = chunk["eval_count"]
-            if stream_callback and content.strip():
-                stream_callback(content)
+    # Build request URL - using /deployments/ (not /openai/deployments/)
+    url = f"{API_BASE_URL}/deployments/{model_name}/chat/completions?api-version={API_VERSION}"
 
-    except Exception as e:
-        error_msg = f"LLM Error: {str(e)}"
-        print(error_msg)
-        if stream_callback:
-            stream_callback(error_msg)
-        return {"response": error_msg, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-
-    if not full_response.strip():
-        full_response = "Sorry, I couldn't generate a response."
-
-    return {
-        "response": full_response,
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": prompt_tokens + completion_tokens
+    # Use api-key header (not Bearer)
+    headers = {
+        "api-key": API_KEY,
+        "Content-Type": "application/json"
     }
 
+    # Request body - no 'model' field needed (model is in URL)
+    data = {
+        "messages": [
+            {"role": "system",
+             "content": "You are a helpful HKBU study assistant. Answer based on the provided context."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": temperature,  # Now 1.0
+        "max_tokens": num_predict,
+        "stream": False
+    }
 
-# ====================== 对话历史 ======================
+    # Add stop sequences if provided
+    if stop_sequences:
+        data["stop"] = stop_sequences
+
+    try:
+        print(f"📡 Calling API: {model_name}")
+        print(f"📡 URL: {url}")
+        response = requests.post(
+            url,
+            headers=headers,
+            json=data,
+            timeout=60
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+
+            # Parse response (OpenAI compatible format)
+            if "choices" in result and len(result["choices"]) > 0:
+                content = result["choices"][0]["message"]["content"]
+            else:
+                content = str(result)
+
+            usage = result.get("usage", {})
+
+            # Stream callback if enabled
+            if stream_callback:
+                stream_callback(content)
+
+            print(f"✅ API call successful (tokens: {usage.get('total_tokens', 0)})")
+
+            return {
+                "response": content,
+                "prompt_tokens": usage.get("prompt_tokens", 0),
+                "completion_tokens": usage.get("completion_tokens", 0),
+                "total_tokens": usage.get("total_tokens", 0)
+            }
+        else:
+            error_msg = f"API Error: {response.status_code} - {response.text[:200]}"
+            print(f"❌ {error_msg}")
+            return {
+                "response": f"Sorry, there was an API error. Please try again later.",
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0
+            }
+
+    except requests.exceptions.Timeout:
+        error_msg = "Request Timeout: API took too long to respond"
+        print(f"❌ {error_msg}")
+        return {
+            "response": "Sorry, the request timed out. Please try again.",
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0
+        }
+    except Exception as e:
+        error_msg = f"Request Error: {str(e)}"
+        print(f"❌ {error_msg}")
+        return {
+            "response": f"Sorry, an error occurred: {str(e)}",
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0
+        }
+
+
+# ====================== Conversation History Management ======================
 class ConversationManager:
+    """Manage conversation history"""
+
     def __init__(self):
         self.history = []
 
     def add_message(self, role: str, content: str):
+        """Add a message to history"""
         self.history.append({"role": role, "content": content})
 
     def get_history_string(self, max_turns: int = 4):
-        recent = self.history[-max_turns:]
+        """Get history string for prompt"""
+        recent = self.history[-max_turns * 2:]  # User + assistant = 1 turn
         return "\n".join([f"{item['role']}: {item['content']}" for item in recent])
 
     def clear_history(self):
+        """Clear conversation history"""
         self.history = []
+        print("🧹 Conversation history cleared")
 
+
+# ====================== Greeting Detection ======================
 def is_greeting(query: str) -> bool:
+    """Check if the query is a greeting"""
     q = query.strip().lower()
-    greetings = {"hi", "hello", "hey", "hi!", "hello!", "hey!", "haha", "good morning", "good afternoon"}
-    return q in greetings
+    greetings = {
+        "hi", "hello", "hey", "hi!", "hello!", "hey!",
+        "haha", "good morning", "good afternoon", "good evening",
+        "how are you", "what's up", "sup", "greetings"
+    }
+    return q in greetings or any(g in q for g in greetings)
+
+
+# ====================== Answer Extraction ======================
+def extract_answer(response_text: str) -> str:
+    """Extract answer from LLM response (remove thinking process)"""
+    import re
+    # Try to extract content inside <Answer> tags
+    pattern = r"<Answer>\s*(.*?)(?:</Answer>|$)"
+    match = re.search(pattern, response_text, re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+
+    # Try to extract content after "Answer:"
+    pattern2 = r"Answer:\s*(.*?)(?:\n\n|$)"
+    match2 = re.search(pattern2, response_text, re.DOTALL | re.IGNORECASE)
+    if match2:
+        return match2.group(1).strip()
+
+    # Return original response if no tags found
+    return response_text.strip()
+
+
+# ====================== Test Entry Point ======================
+if __name__ == "__main__":
+    print("=" * 50)
+    print("RAG Engine Test")
+    print("=" * 50)
+
+    # Test API connection
+    print("\n📡 Testing API connection...")
+    # Changed temperature from 0.0 to 1.0
+    test_response = complete_document_sdk(prompt="Say 'Hello, HKBU!'", temperature=1.0)
+
+    if test_response.get("response") and "Error" not in test_response["response"]:
+        print(f"\n✅ API test successful!")
+        print(f"Response: {test_response['response'][:100]}...")
+        print(f"Token usage: {test_response.get('total_tokens', 0)}")
+    else:
+        print(f"\n❌ API test failed: {test_response.get('response')}")
+        print("\nPlease check:")
+        print("1. API_KEY in .env file is correct")
+        print("2. API_BASE_URL is correct")
+        print("3. Network can access school API")
+
+    # Show loaded documents
+    print(f"\n📚 Loaded {len(documents)} documents, {len(nodes)} chunks")
