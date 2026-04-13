@@ -127,37 +127,25 @@ source venv/bin/activate
 
 pip install -r requirements.txt
 
-# Telegram Bot Configuration
+# Environment Variables Configuration
+Create a `.env` file in the project root directory with the following content:
+
+# Telegram Bot Token
 TELEGRAM_TOKEN=your_telegram_bot_token_here
 
 # HKBU GenAI Platform API Configuration
-API_KEY=your_hkbu_api_key_here
+API_KEY=your_api_key_here
 API_BASE_URL=https://genai.hkbu.edu.hk/api/v0/rest
 MODEL=gpt-5
 API_VERSION=2024-12-01-preview
 
-# PostgreSQL Database Configuration
-DB_HOST=localhost
+# AWS RDS Database Configuration
+DB_HOST=your_rds_endpoint_or_ip_here
 DB_PORT=5432
-DB_NAME=hkbu_bot
+DB_NAME=postgres
 DB_USER=bot_user
-DB_PASSWORD=your_password_here
+DB_PASSWORD=your_database_password_here
 
-# Create data directory if not exists
-mkdir -p data
-
-# Add your PDF files
-cp /path/to/your/course_pdfs/*.pdf data/
-
-# Using Docker
-docker run -d \
-  --name postgres-test \
-  -e POSTGRES_USER=bot_user \
-  -e POSTGRES_PASSWORD=bot_password \
-  -e POSTGRES_DB=hkbu_bot \
-  -p 5432:5432 \
-  postgres:15-alpine
-  
 # Run the bot
 python bot.py
 
