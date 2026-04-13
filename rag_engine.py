@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 import PyPDF2
 from typing import List, Dict, Any
@@ -87,24 +88,56 @@ documents = load_all_documents(DATA_DIR)
 nodes = chunk_documents(documents)
 
 
-# ====================== Keyword Retrieval ======================
+# ====================== Keyword Retrieval with Course Code Extraction ======================
+def extract_course_codes(text: str) -> List[str]:
+    """Extract course codes like COMP7430, COMP 7430, COMP-7430 from text"""
+    course_codes = []
+    # Pattern for COMP followed by 4 digits (with optional space/hyphen/underscore)
+    patterns = [
+        r'COMP\s*(\d{4})',  # COMP7430 or COMP 7430
+        r'COMP[-_]\s*(\d{4})',  # COMP-7430 or COMP_7430
+        r'comp\s*(\d{4})',  # comp7430 (lowercase)
+    ]
+    for pattern in patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        for match in matches:
+            # Add various formats
+            course_codes.append(f"COMP{match}")
+            course_codes.append(f"comp{match}")
+            course_codes.append(f"COMP-{match}")
+            course_codes.append(f"COMP {match}")
+    return list(set(course_codes))  # Remove duplicates
+
+
 def retrieve_context(
         nodes: List,
         query: str,
         method: str = "keyword",
         top_k: int = 5
 ) -> List[Dict]:
-    """Retrieve relevant document chunks based on keyword matching"""
+    """Retrieve relevant document chunks based on keyword matching with course code extraction"""
     if not nodes:
         return []
+
+    # Extract course codes from query
+    course_codes = extract_course_codes(query)
 
     # Split query into keywords
     query_words = set(query.lower().split())
 
+    # Add course codes as keywords (in various formats)
+    for code in course_codes:
+        query_words.add(code.lower())
+        # Also add just the number part
+        num_match = re.search(r'(\d{4})', code)
+        if num_match:
+            query_words.add(num_match.group(1))
+
     # Filter common stop words
     stop_words = {"的", "了", "是", "在", "我", "有", "和", "就", "不", "也", "都", "说",
                   "a", "an", "the", "is", "are", "was", "were", "to", "of", "and", "or",
-                  "in", "on", "at", "for", "with", "by"}
+                  "in", "on", "at", "for", "with", "by", "tell", "me", "more", "about",
+                  "what", "can", "you", "please", "course", "courses"}
     query_words = query_words - stop_words
 
     if not query_words:
@@ -125,7 +158,9 @@ def retrieve_context(
     scored_nodes.sort(key=lambda x: x[0], reverse=True)
     results = [node for score, node in scored_nodes[:top_k]]
 
-    print(f"🔍 Retrieved {len(results)} relevant chunks")
+    print(f"🔍 Retrieved {len(results)} relevant chunks (keywords: {list(query_words)[:10]}...)")
+    if course_codes:
+        print(f"📚 Extracted course codes: {course_codes}")
     return results
 
 
