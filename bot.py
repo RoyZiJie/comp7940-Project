@@ -250,8 +250,13 @@ async def handle_message(update: Update, context):
         conv_manager = conversation_managers[user_id]
         history_str = conv_manager.get_history_string()
 
-        # Check if it's a greeting
-        if is_greeting(user_input):
+        # Check if it's a greeting - but NOT if it contains course-related keywords
+        course_keywords = ['comp', 'course', 'class', 'lecture', 'professor', 'teaching', 'instructor', 'what is',
+                           'tell me about']
+        is_real_greeting = is_greeting(user_input)
+
+        # Don't treat as greeting if it contains course-related terms
+        if is_real_greeting and not any(keyword in user_input.lower() for keyword in course_keywords):
             answer = "Hello! How can I assist you with your studies today?"
             conv_manager.add_message("User", user_input)
             conv_manager.add_message("Assistant", answer)
@@ -281,24 +286,45 @@ async def handle_message(update: Update, context):
             sources = list(set([item.get('file_name', 'unknown') for item in retrieval_context[:3]]))
             print(f"📚 Retrieved {len(retrieval_context)} relevant chunks")
         else:
-            context_str = "No relevant documents found. Answer based on your knowledge."
+            context_str = "No relevant documents found."
             print("📚 No relevant documents found")
 
-        # 2. Generate prompt
-        prompt = generate_prompt(
-            context=context_str,
-            history=history_str,
-            query=user_input,
-            use_cot=True
-        )
+        # 2. Generate prompt - add instruction for when no context found
+        if not retrieval_context:
+            prompt = f"""You are a helpful HKBU study assistant. The user asked a question but no relevant documents were found in the knowledge base.
 
-        # 3. Call LLM API - temperature must be 1.0 for GPT-5
-        response = complete_document_sdk(
-            prompt=prompt,
-            temperature=1.0
-        )
+Please respond with a message like:
+"Sorry, I couldn't find any information about '{user_input}' in the available documents. Please try asking about HKBU courses, professors, or campus facilities."
+
+Conversation History: {history_str}
+User: {user_input}
+
+Assistant:"""
+        else:
+            prompt = generate_prompt(
+                context=context_str,
+                history=history_str,
+                query=user_input,
+                use_cot=True
+            )
+
+        # 3. Call LLM API with timeout
+        try:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(complete_document_sdk, prompt=prompt, temperature=1.0),
+                timeout=25.0
+            )
+        except asyncio.TimeoutError:
+            await update.message.reply_text(
+                "⏰ The request is taking too long. Please try again in a moment."
+            )
+            return
 
         answer = extract_answer(response.get("response", ""))
+
+        # If answer is empty or too short, provide fallback
+        if not answer or len(answer) < 10:
+            answer = f"Sorry, I couldn't find specific information about '{user_input}'. Please try rephrasing your question or ask about HKBU courses and professors."
 
         # Save conversation history
         conv_manager.add_message("User", user_input)
@@ -315,8 +341,7 @@ async def handle_message(update: Update, context):
         # Send reply - try Markdown first, fallback to plain text
         try:
             await update.message.reply_text(answer, parse_mode="Markdown")
-        except Exception as e:
-            print(f"Markdown parse error: {e}, sending plain text")
+        except Exception:
             await update.message.reply_text(answer)
 
     except Exception as e:

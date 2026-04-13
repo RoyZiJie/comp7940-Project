@@ -109,6 +109,32 @@ def extract_course_codes(text: str) -> List[str]:
     return list(set(course_codes))  # Remove duplicates
 
 
+def extract_professor_keywords(text: str) -> List[str]:
+    """Extract professor-related keywords from query"""
+    keywords = []
+    text_lower = text.lower()
+
+    # Professor-related patterns
+    professor_patterns = [
+        r'who\s+is\s+teaching',
+        r'who\s+teaches',
+        r'instructor',
+        r'professor',
+        r'prof\.',
+        r'dr\.',
+        r'teaching\s+staff',
+        r'faculty'
+    ]
+
+    for pattern in professor_patterns:
+        if re.search(pattern, text_lower):
+            keywords.append('professor')
+            keywords.append('instructor')
+            keywords.append('teaching staff')
+
+    return list(set(keywords))
+
+
 def retrieve_context(
         nodes: List,
         query: str,
@@ -122,6 +148,9 @@ def retrieve_context(
     # Extract course codes from query
     course_codes = extract_course_codes(query)
 
+    # Extract professor-related keywords
+    professor_keywords = extract_professor_keywords(query)
+
     # Split query into keywords
     query_words = set(query.lower().split())
 
@@ -132,6 +161,10 @@ def retrieve_context(
         num_match = re.search(r'(\d{4})', code)
         if num_match:
             query_words.add(num_match.group(1))
+
+    # Add professor keywords
+    for kw in professor_keywords:
+        query_words.add(kw)
 
     # Filter common stop words
     stop_words = {"的", "了", "是", "在", "我", "有", "和", "就", "不", "也", "都", "说",
@@ -161,6 +194,8 @@ def retrieve_context(
     print(f"🔍 Retrieved {len(results)} relevant chunks (keywords: {list(query_words)[:10]}...)")
     if course_codes:
         print(f"📚 Extracted course codes: {course_codes}")
+    if professor_keywords:
+        print(f"👨‍🏫 Professor keywords: {professor_keywords}")
     return results
 
 
@@ -218,7 +253,7 @@ def complete_document_sdk(
         prompt: str,
         model: str = None,
         num_predict: int = 2048,
-        temperature: float = 1.0,  # Changed from 0.0 to 1.0
+        temperature: float = 1.0,
         stop_sequences: List[str] = None,
         stream_callback=None
 ) -> Dict[str, Any]:
@@ -250,7 +285,7 @@ def complete_document_sdk(
              "content": "You are a helpful HKBU study assistant. Answer based on the provided context."},
             {"role": "user", "content": prompt}
         ],
-        "temperature": temperature,  # Now 1.0
+        "temperature": temperature,
         "max_tokens": num_predict,
         "stream": False
     }
@@ -384,7 +419,6 @@ if __name__ == "__main__":
 
     # Test API connection
     print("\n📡 Testing API connection...")
-    # Changed temperature from 0.0 to 1.0
     test_response = complete_document_sdk(prompt="Say 'Hello, HKBU!'", temperature=1.0)
 
     if test_response.get("response") and "Error" not in test_response["response"]:
