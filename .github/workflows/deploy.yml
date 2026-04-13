@@ -295,10 +295,10 @@ jobs:
         run: |
           echo "🏷️ Tagging Docker image..."
           
-          # 转换为小写(GHCR要求)
+          # Convert to lowercase (required by GHCR)
           IMAGE_NAME=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           
-          # 标记为latest和版本号
+          # Tag as latest and versioned
           docker tag hkbu-buddy-bot:${{ github.sha }} $IMAGE_NAME:latest
           docker tag hkbu-buddy-bot:${{ github.sha }} $IMAGE_NAME:${{ github.run_number }}
           docker tag hkbu-buddy-bot:${{ github.sha }} $IMAGE_NAME:${{ github.sha }}
@@ -403,27 +403,27 @@ jobs:
             
             echo "🚀 Starting deployment on EC2..."
             
-            # 配置变量（转换为小写，Docker要求）
+            # Configure variables (convert to lowercase, required by Docker)
             IMAGE_NAME=$(echo "ghcr.io/${{ github.repository }}:latest" | tr '[:upper:]' '[:lower:]')
             CONTAINER_NAME="hkbu-buddy-bot"
             ENV_FILE="/home/${{ secrets.EC2_USER }}/hkbu-bot/.env"
             
-            # 登录 GHCR
+            # Login to GHCR
             echo "🔐 Logging in to GHCR..."
             echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin
             
-            # 拉取最新镜像
+            # Pull latest image
             echo "📥 Pulling latest image..."
             docker pull $IMAGE_NAME
             
-            # 停止旧容器
+            # Stop old container
             if docker ps -a | grep -q $CONTAINER_NAME; then
               echo "🛑 Stopping old container..."
               docker stop $CONTAINER_NAME || true
               docker rm $CONTAINER_NAME || true
             fi
             
-            # 启动新容器
+            # Start new container
             echo "▶️ Starting new container..."
             docker run -d \
               --name $CONTAINER_NAME \
@@ -451,14 +451,14 @@ jobs:
             
             CONTAINER_NAME="hkbu-buddy-bot"
             
-            # 检查容器是否运行
+            # Check if container is running
             if docker ps | grep -q $CONTAINER_NAME; then
               echo "✅ Container is running"
               
-              # 等待容器启动
+              # Wait for container to start
               sleep 5
               
-              # 检查日志中是否有数据库连接成功
+              # Check if database connection is successful in logs
               if docker logs $CONTAINER_NAME 2>&1 | grep -q "Database connected"; then
                 echo "✅ Database connected successfully"
               elif docker logs $CONTAINER_NAME 2>&1 | grep -q "Database connection failed"; then
@@ -467,7 +467,7 @@ jobs:
                 echo "⚠️ Could not determine database status"
               fi
               
-              # 检查 bot 是否启动
+              # Check if bot has started
               if docker logs $CONTAINER_NAME 2>&1 | grep -q "HKBU Buddy Telegram Bot started"; then
                 echo "✅ Bot started successfully"
               else
