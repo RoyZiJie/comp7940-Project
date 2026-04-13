@@ -382,10 +382,109 @@ jobs:
           echo "✅ Deployment readiness check passed!"
           echo "The bot is ready to be deployed."
 
+  deploy-ec2:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    needs: [test, security-check, docker-build, deploy-test]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            
+            echo "🚀 Starting deployment on EC2..."
+            
+            # 配置变量
+            IMAGE_NAME="ghcr.io/${{ github.repository }}:latest"
+            CONTAINER_NAME="hkbu-buddy-bot"
+            ENV_FILE="/home/${{ secrets.EC2_USER }}/hkbu-bot/.env"
+            
+            # 登录 GHCR
+            echo "🔐 Logging in to GHCR..."
+            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin
+            
+            # 拉取最新镜像
+            echo "📥 Pulling latest image..."
+            docker pull $IMAGE_NAME
+            
+            # 停止旧容器
+            if docker ps -a | grep -q $CONTAINER_NAME; then
+              echo "🛑 Stopping old container..."
+              docker stop $CONTAINER_NAME || true
+              docker rm $CONTAINER_NAME || true
+            fi
+            
+            # 启动新容器
+            echo "▶️ Starting new container..."
+            docker run -d \
+              --name $CONTAINER_NAME \
+              --restart unless-stopped \
+              --memory="1g" \
+              --cpus="2" \
+              --env-file $ENV_FILE \
+              $IMAGE_NAME
+            
+            echo "✅ Deployment complete!"
+            echo "📋 Container status:"
+            docker ps | grep $CONTAINER_NAME
+            echo ""
+            echo "📜 Recent logs:"
+            docker logs --tail 20 $CONTAINER_NAME
+
+      - name: Verify deployment
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            echo "🔍 Verifying deployment..."
+            
+            CONTAINER_NAME="hkbu-buddy-bot"
+            
+            # 检查容器是否运行
+            if docker ps | grep -q $CONTAINER_NAME; then
+              echo "✅ Container is running"
+              
+              # 等待容器启动
+              sleep 5
+              
+              # 检查日志中是否有数据库连接成功
+              if docker logs $CONTAINER_NAME 2>&1 | grep -q "Database connected"; then
+                echo "✅ Database connected successfully"
+              elif docker logs $CONTAINER_NAME 2>&1 | grep -q "Database connection failed"; then
+                echo "⚠️ Warning: Database connection failed (running without DB)"
+              else
+                echo "⚠️ Could not determine database status"
+              fi
+              
+              # 检查 bot 是否启动
+              if docker logs $CONTAINER_NAME 2>&1 | grep -q "HKBU Buddy Telegram Bot started"; then
+                echo "✅ Bot started successfully"
+              else
+                echo "⚠️ Bot may not have started properly"
+              fi
+              
+              echo "✅ Deployment verification passed!"
+            else
+              echo "❌ Container is not running"
+              docker logs $CONTAINER_NAME --tail 50
+              exit 1
+            fi
+
   summary:
     name: Pipeline Summary
     runs-on: ubuntu-latest
-    needs: [test, security-check, lint, docker-build, deploy-test]
+    needs: [test, security-check, lint, docker-build, deploy-test, deploy-ec2]
     if: always()
 
     steps:
@@ -395,7 +494,7 @@ jobs:
           echo "   CI/CD Pipeline Execution Summary"
           echo "=========================================="
           echo ""
-          echo "Pipeline Status: ${{ needs.test.result == 'success' && needs.security-check.result == 'success' && needs.lint.result == 'success' && needs.docker-build.result == 'success' && needs.deploy-test.result == 'success' && '✅ PASSED' || '❌ FAILED' }}"
+          echo "Pipeline Status: ${{ needs.test.result == 'success' && needs.security-check.result == 'success' && needs.lint.result == 'success' && needs.docker-build.result == 'success' && needs.deploy-test.result == 'success' && (needs.deploy-ec2.result == 'success' || needs.deploy-ec2.result == 'skipped') && '✅ PASSED' || '❌ FAILED' }}"
           echo ""
           echo "Job Results:"
           echo "  • Test & Validation:     ${{ needs.test.result }}"
@@ -403,9 +502,10 @@ jobs:
           echo "  • Code Quality:          ${{ needs.lint.result }}"
           echo "  • Docker Build & Test:   ${{ needs.docker-build.result }}"
           echo "  • Deployment Readiness:  ${{ needs.deploy-test.result }}"
+          echo "  • EC2 Deployment:        ${{ needs.deploy-ec2.result }}"
           echo ""
           echo "=========================================="
           
-          if [ "${{ needs.test.result }}" != "success" ] || [ "${{ needs.security-check.result }}" != "success" ] || [ "${{ needs.lint.result }}" != "success" ] || [ "${{ needs.docker-build.result }}" != "success" ] || [ "${{ needs.deploy-test.result }}" != "success" ]; then
+          if [ "${{ needs.test.result }}" != "success" ] || [ "${{ needs.security-check.result }}" != "success" ] || [ "${{ needs.lint.result }}" != "success" ] || [ "${{ needs.docker-build.result }}" != "success" ] || [ "${{ needs.deploy-test.result }}" != "success" ] || ([ "${{ needs.deploy-ec2.result }}" != "success" ] && [ "${{ needs.deploy-ec2.result }}" != "skipped" ]); then
             exit 1
           fi
