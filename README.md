@@ -176,8 +176,47 @@ comp7940-Project/
 ├── .gitignore                  # Git ignore rules
 ├── README.md                   # Project documentation
 └── LICENSE                     # MIT License
-
 ```
+## ☁️ Deployment Architecture
+
+### Deploy with Docker (Local)
+
+#### 1. Login to GitHub Container Registry
+
+```bash
+docker login ghcr.io -u YOUR_GITHUB_USERNAME -p YOUR_PERSONAL_ACCESS_TOKEN
+```
+#### 2. Pull the Docker image
+
+```bash
+docker pull ghcr.io/royzijie/comp7940-project:latest
+```
+#### 3. Run the container
+```bash
+docker run -d --name hkbu-buddy  --env-file .env ghcr.io/royzijie/comp7940-project:latest
+```
+#### 4. Verify the container is running
+```bash
+docker ps
+docker logs hkbu-buddy
+```
+#### 5. Test the bot
+
+Open Telegram and send a message to @HKBU_buddy_bot
+
+### Deploy to AWS EC2 (Cloud)
+This project is deployed on AWS EC2 for 24/7 cloud hosting.
+```bash
+# SSH to EC2
+ssh -i your-key.pem ubuntu@your-ec2-public-ip
+
+# Pull and run
+docker pull ghcr.io/royzijie/comp7940-project:latest
+docker rm -f hkbu-buddy
+docker run -d --name hkbu-buddy --restart unless-stopped --env-file .env ghcr.io/royzijie/comp7940-project:latest
+docker logs hkbu-buddy
+```
+
 ## 👥 Team Information
 
 ---
