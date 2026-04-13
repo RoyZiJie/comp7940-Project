@@ -403,8 +403,8 @@ jobs:
             
             echo "🚀 Starting deployment on EC2..."
             
-            # 配置变量
-            IMAGE_NAME="ghcr.io/${{ github.repository }}:latest"
+            # 配置变量（转换为小写，Docker要求）
+            IMAGE_NAME=$(echo "ghcr.io/${{ github.repository }}:latest" | tr '[:upper:]' '[:lower:]')
             CONTAINER_NAME="hkbu-buddy-bot"
             ENV_FILE="/home/${{ secrets.EC2_USER }}/hkbu-bot/.env"
             
