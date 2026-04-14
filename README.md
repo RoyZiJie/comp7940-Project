@@ -161,9 +161,6 @@ DB_NAME=postgres
 DB_USER=bot_user
 DB_PASSWORD=your_database_password_here
 
-# SerpAPI Web Search (optional)
-SERPAPI_KEY=your_serpapi_key_here
-
 # Run the bot
 python bot.py
 
