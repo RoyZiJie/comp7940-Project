@@ -14,10 +14,55 @@ API_BASE_URL = os.getenv("API_BASE_URL", "https://genai.hkbu.edu.hk/api/v0/rest"
 MODEL = os.getenv("MODEL", "gpt-5")
 API_VERSION = os.getenv("API_VERSION", "2024-12-01-preview")
 
+# SerpAPI Configuration (for web search)
+SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")
+
 CHUNK_SIZE = 512
 CHUNK_OVERLAP = 128
 STORAGE_DIR = "./storage"
 DATA_DIR = "./data"
+
+
+# ====================== Web Search Function ======================
+def search_web(query: str, max_results: int = 3) -> str:
+    """Search the web using SerpAPI Google Search"""
+    if not SERPAPI_KEY:
+        return None
+
+    try:
+        params = {
+            "q": query,
+            "api_key": SERPAPI_KEY,
+            "engine": "google",
+            "num": max_results
+        }
+
+        response = requests.get(
+            "https://serpapi.com/search",
+            params=params,
+            timeout=15
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            results = []
+
+            for item in data.get("organic_results", [])[:max_results]:
+                title = item.get("title", "")
+                snippet = item.get("snippet", "")
+                link = item.get("link", "")
+
+                if snippet:
+                    results.append(f"**{title}**\n{snippet}\nSource: {link}")
+
+            if results:
+                return "🌐 **Internet Search Results:**\n\n" + "\n\n---\n\n".join(results)
+
+        return None
+
+    except Exception as e:
+        print(f"Web search failed: {e}")
+        return None
 
 
 # ====================== Document Loading & Chunking ======================
@@ -139,64 +184,77 @@ def retrieve_context(
         nodes: List,
         query: str,
         method: str = "keyword",
-        top_k: int = 5
+        top_k: int = 5,
+        use_web_search: bool = True
 ) -> List[Dict]:
     """Retrieve relevant document chunks based on keyword matching with course code extraction"""
-    if not nodes:
-        return []
 
-    # Extract course codes from query
-    course_codes = extract_course_codes(query)
+    # First, try to get results from local documents
+    if nodes:
+        # Extract course codes from query
+        course_codes = extract_course_codes(query)
 
-    # Extract professor-related keywords
-    professor_keywords = extract_professor_keywords(query)
+        # Extract professor-related keywords
+        professor_keywords = extract_professor_keywords(query)
 
-    # Split query into keywords
-    query_words = set(query.lower().split())
+        # Split query into keywords
+        query_words = set(query.lower().split())
 
-    # Add course codes as keywords (in various formats)
-    for code in course_codes:
-        query_words.add(code.lower())
-        # Also add just the number part
-        num_match = re.search(r'(\d{4})', code)
-        if num_match:
-            query_words.add(num_match.group(1))
+        # Add course codes as keywords (in various formats)
+        for code in course_codes:
+            query_words.add(code.lower())
+            # Also add just the number part
+            num_match = re.search(r'(\d{4})', code)
+            if num_match:
+                query_words.add(num_match.group(1))
 
-    # Add professor keywords
-    for kw in professor_keywords:
-        query_words.add(kw)
+        # Add professor keywords
+        for kw in professor_keywords:
+            query_words.add(kw)
 
-    # Filter common stop words
-    stop_words = {"的", "了", "是", "在", "我", "有", "和", "就", "不", "也", "都", "说",
-                  "a", "an", "the", "is", "are", "was", "were", "to", "of", "and", "or",
-                  "in", "on", "at", "for", "with", "by", "tell", "me", "more", "about",
-                  "what", "can", "you", "please", "course", "courses"}
-    query_words = query_words - stop_words
+        # Filter common stop words
+        stop_words = {"的", "了", "是", "在", "我", "有", "和", "就", "不", "也", "都", "说",
+                      "a", "an", "the", "is", "are", "was", "were", "to", "of", "and", "or",
+                      "in", "on", "at", "for", "with", "by", "tell", "me", "more", "about",
+                      "what", "can", "you", "please", "course", "courses"}
+        query_words = query_words - stop_words
 
-    if not query_words:
-        return []
+        if query_words:
+            # Calculate match score for each chunk
+            scored_nodes = []
+            for node in nodes:
+                content_lower = node["content"].lower()
+                score = 0
+                for word in query_words:
+                    if word in content_lower:
+                        score += 1
+                if score > 0:
+                    scored_nodes.append((score, node))
 
-    # Calculate match score for each chunk
-    scored_nodes = []
-    for node in nodes:
-        content_lower = node["content"].lower()
-        score = 0
-        for word in query_words:
-            if word in content_lower:
-                score += 1
-        if score > 0:
-            scored_nodes.append((score, node))
+            # Sort by score and take top_k
+            scored_nodes.sort(key=lambda x: x[0], reverse=True)
+            results = [node for score, node in scored_nodes[:top_k]]
 
-    # Sort by score and take top_k
-    scored_nodes.sort(key=lambda x: x[0], reverse=True)
-    results = [node for score, node in scored_nodes[:top_k]]
+            if results:
+                print(f"🔍 Retrieved {len(results)} relevant chunks from local documents")
+                if course_codes:
+                    print(f"📚 Extracted course codes: {course_codes}")
+                if professor_keywords:
+                    print(f"👨‍🏫 Professor keywords: {professor_keywords}")
+                return results
 
-    print(f"🔍 Retrieved {len(results)} relevant chunks (keywords: {list(query_words)[:10]}...)")
-    if course_codes:
-        print(f"📚 Extracted course codes: {course_codes}")
-    if professor_keywords:
-        print(f"👨‍🏫 Professor keywords: {professor_keywords}")
-    return results
+    # If no local results and web search is enabled, try web search
+    if use_web_search:
+        print(f"🌐 No local results, trying web search for: {query}")
+        web_results = search_web(query)
+        if web_results:
+            # Return web results as a special node
+            return [{
+                "file_name": "Internet Search",
+                "content": web_results
+            }]
+
+    return []
 
 
 # ====================== Prompt Generation ======================

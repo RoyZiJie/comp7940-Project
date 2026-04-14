@@ -268,12 +268,13 @@ async def handle_message(update: Update, context):
             await update.message.reply_text(answer)
             return
 
-        # 1. Retrieve relevant context from documents
+        # 1. Retrieve relevant context from documents (with web search fallback)
         retrieval_context = retrieve_context(
             nodes=nodes,
             query=user_input,
             method="keyword",
-            top_k=5
+            top_k=5,
+            use_web_search=True  # 启用联网搜索
         )
 
         # Build context string
@@ -283,36 +284,30 @@ async def handle_message(update: Update, context):
                 f"[Source: {item.get('file_name', 'unknown')}]\n{item.get('content', '')}"
                 for item in retrieval_context
             ])
-            sources = list(set([item.get('file_name', 'unknown') for item in retrieval_context[:3]]))
-            print(f"📚 Retrieved {len(retrieval_context)} relevant chunks")
+            # Check if this is from web search
+            if len(retrieval_context) == 1 and retrieval_context[0].get('file_name') == "Internet Search":
+                sources = ["Web Search"]
+                print(f"🌐 Retrieved {len(retrieval_context)} web search results")
+            else:
+                sources = list(set([item.get('file_name', 'unknown') for item in retrieval_context[:3]]))
+                print(f"📚 Retrieved {len(retrieval_context)} relevant chunks")
         else:
             context_str = "No relevant documents found."
             print("📚 No relevant documents found")
 
-        # 2. Generate prompt - add instruction for when no context found
-        if not retrieval_context:
-            prompt = f"""You are a helpful HKBU study assistant. The user asked a question but no relevant documents were found in the knowledge base.
-
-Please respond with a message like:
-"Sorry, I couldn't find any information about '{user_input}' in the available documents. Please try asking about HKBU courses, professors, or campus facilities."
-
-Conversation History: {history_str}
-User: {user_input}
-
-Assistant:"""
-        else:
-            prompt = generate_prompt(
-                context=context_str,
-                history=history_str,
-                query=user_input,
-                use_cot=True
-            )
+        # 2. Generate prompt
+        prompt = generate_prompt(
+            context=context_str,
+            history=history_str,
+            query=user_input,
+            use_cot=True
+        )
 
         # 3. Call LLM API with timeout
         try:
             response = await asyncio.wait_for(
                 asyncio.to_thread(complete_document_sdk, prompt=prompt, temperature=1.0),
-                timeout=25.0
+                timeout=30.0
             )
         except asyncio.TimeoutError:
             await update.message.reply_text(
@@ -334,8 +329,8 @@ Assistant:"""
         await save_session(user_id, conv_manager.history)
         await save_chat_log(user_id, user_input, answer, ", ".join(sources) if sources else None)
 
-        # Show sources if available
-        if sources:
+        # Show sources if available (don't show for web search as it's already in context)
+        if sources and "Web Search" not in sources:
             answer += f"\n\n📖 *Sources:* {', '.join(sources)}"
 
         # Send reply - try Markdown first, fallback to plain text

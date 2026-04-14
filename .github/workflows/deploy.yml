@@ -408,6 +408,21 @@ jobs:
             CONTAINER_NAME="hkbu-buddy-bot"
             ENV_FILE="/home/${{ secrets.EC2_USER }}/hkbu-bot/.env"
             
+            # Create .env file with all secrets
+            cat > $ENV_FILE << 'EOF'
+            TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}
+            API_KEY=${{ secrets.API_KEY }}
+            API_BASE_URL=${{ secrets.API_BASE_URL }}
+            MODEL=${{ secrets.MODEL }}
+            API_VERSION=${{ secrets.API_VERSION }}
+            DB_HOST=${{ secrets.DB_HOST }}
+            DB_PORT=${{ secrets.DB_PORT }}
+            DB_NAME=${{ secrets.DB_NAME }}
+            DB_USER=${{ secrets.DB_USER }}
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            SERPAPI_KEY=${{ secrets.SERPAPI_KEY }}
+            EOF
+            
             # Login to GHCR
             echo "🔐 Logging in to GHCR..."
             echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin
