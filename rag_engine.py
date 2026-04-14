@@ -137,21 +137,19 @@ nodes = chunk_documents(documents)
 def extract_course_codes(text: str) -> List[str]:
     """Extract course codes like COMP7430, COMP 7430, COMP-7430 from text"""
     course_codes = []
-    # Pattern for COMP followed by 4 digits (with optional space/hyphen/underscore)
     patterns = [
-        r'COMP\s*(\d{4})',  # COMP7430 or COMP 7430
-        r'COMP[-_]\s*(\d{4})',  # COMP-7430 or COMP_7430
-        r'comp\s*(\d{4})',  # comp7430 (lowercase)
+        r'COMP\s*(\d{4})',
+        r'COMP[-_]\s*(\d{4})',
+        r'comp\s*(\d{4})',
     ]
     for pattern in patterns:
         matches = re.findall(pattern, text, re.IGNORECASE)
         for match in matches:
-            # Add various formats
             course_codes.append(f"COMP{match}")
             course_codes.append(f"comp{match}")
             course_codes.append(f"COMP-{match}")
             course_codes.append(f"COMP {match}")
-    return list(set(course_codes))  # Remove duplicates
+    return list(set(course_codes))
 
 
 def extract_professor_keywords(text: str) -> List[str]:
@@ -159,7 +157,6 @@ def extract_professor_keywords(text: str) -> List[str]:
     keywords = []
     text_lower = text.lower()
 
-    # Professor-related patterns
     professor_patterns = [
         r'who\s+is\s+teaching',
         r'who\s+teaches',
@@ -187,32 +184,24 @@ def retrieve_context(
         top_k: int = 5,
         use_web_search: bool = True
 ) -> List[Dict]:
-    """Retrieve relevant document chunks based on keyword matching with course code extraction"""
+    """Retrieve relevant document chunks - combines local + web search results"""
+    results = []
 
-    # First, try to get results from local documents
+    # 1. Try to get results from local documents
     if nodes:
-        # Extract course codes from query
         course_codes = extract_course_codes(query)
-
-        # Extract professor-related keywords
         professor_keywords = extract_professor_keywords(query)
-
-        # Split query into keywords
         query_words = set(query.lower().split())
 
-        # Add course codes as keywords (in various formats)
         for code in course_codes:
             query_words.add(code.lower())
-            # Also add just the number part
             num_match = re.search(r'(\d{4})', code)
             if num_match:
                 query_words.add(num_match.group(1))
 
-        # Add professor keywords
         for kw in professor_keywords:
             query_words.add(kw)
 
-        # Filter common stop words
         stop_words = {"的", "了", "是", "在", "我", "有", "和", "就", "不", "也", "都", "说",
                       "a", "an", "the", "is", "are", "was", "were", "to", "of", "and", "or",
                       "in", "on", "at", "for", "with", "by", "tell", "me", "more", "about",
@@ -220,7 +209,6 @@ def retrieve_context(
         query_words = query_words - stop_words
 
         if query_words:
-            # Calculate match score for each chunk
             scored_nodes = []
             for node in nodes:
                 content_lower = node["content"].lower()
@@ -231,30 +219,25 @@ def retrieve_context(
                 if score > 0:
                     scored_nodes.append((score, node))
 
-            # Sort by score and take top_k
             scored_nodes.sort(key=lambda x: x[0], reverse=True)
-            results = [node for score, node in scored_nodes[:top_k]]
+            local_results = [node for score, node in scored_nodes[:top_k]]
 
-            if results:
-                print(f"🔍 Retrieved {len(results)} relevant chunks from local documents")
-                if course_codes:
-                    print(f"📚 Extracted course codes: {course_codes}")
-                if professor_keywords:
-                    print(f"👨‍🏫 Professor keywords: {professor_keywords}")
-                return results
+            if local_results:
+                results.extend(local_results)
+                print(f"📚 Retrieved {len(local_results)} relevant chunks from local documents")
 
-    # If no local results and web search is enabled, try web search
-    if use_web_search:
-        print(f"🌐 No local results, trying web search for: {query}")
+    # 2. Also try web search (even if local results found)
+    if use_web_search and SERPAPI_KEY:
+        print(f"🌐 Also fetching web search results for: {query}")
         web_results = search_web(query)
         if web_results:
-            # Return web results as a special node
-            return [{
+            results.append({
                 "file_name": "Internet Search",
                 "content": web_results
-            }]
+            })
+            print(f"🌐 Added web search results")
 
-    return []
+    return results
 
 
 # ====================== Prompt Generation ======================
@@ -298,10 +281,8 @@ History: {history}
 Question: {query}
 Standalone Question:"""
 
-    # Changed temperature from 0.0 to 1.0
     res = complete_document_sdk(prompt=prompt, temperature=1.0)
     rewritten = res["response"].strip()
-    # Clean up newlines
     rewritten = rewritten.split('\n')[0] if '\n' in rewritten else rewritten
     return rewritten if rewritten else query, res
 
@@ -327,16 +308,13 @@ def complete_document_sdk(
 
     model_name = model or MODEL
 
-    # Build request URL - using /deployments/ (not /openai/deployments/)
     url = f"{API_BASE_URL}/deployments/{model_name}/chat/completions?api-version={API_VERSION}"
 
-    # Use api-key header (not Bearer)
     headers = {
         "api-key": API_KEY,
         "Content-Type": "application/json"
     }
 
-    # Request body - no 'model' field needed (model is in URL)
     data = {
         "messages": [
             {"role": "system",
@@ -348,7 +326,6 @@ def complete_document_sdk(
         "stream": False
     }
 
-    # Add stop sequences if provided
     if stop_sequences:
         data["stop"] = stop_sequences
 
@@ -365,7 +342,6 @@ def complete_document_sdk(
         if response.status_code == 200:
             result = response.json()
 
-            # Parse response (OpenAI compatible format)
             if "choices" in result and len(result["choices"]) > 0:
                 content = result["choices"][0]["message"]["content"]
             else:
@@ -373,7 +349,6 @@ def complete_document_sdk(
 
             usage = result.get("usage", {})
 
-            # Stream callback if enabled
             if stream_callback:
                 stream_callback(content)
 
@@ -423,23 +398,19 @@ class ConversationManager:
         self.history = []
 
     def add_message(self, role: str, content: str):
-        """Add a message to history"""
         self.history.append({"role": role, "content": content})
 
     def get_history_string(self, max_turns: int = 4):
-        """Get history string for prompt"""
-        recent = self.history[-max_turns * 2:]  # User + assistant = 1 turn
+        recent = self.history[-max_turns * 2:]
         return "\n".join([f"{item['role']}: {item['content']}" for item in recent])
 
     def clear_history(self):
-        """Clear conversation history"""
         self.history = []
         print("🧹 Conversation history cleared")
 
 
 # ====================== Greeting Detection ======================
 def is_greeting(query: str) -> bool:
-    """Check if the query is a greeting"""
     q = query.strip().lower()
     greetings = {
         "hi", "hello", "hey", "hi!", "hello!", "hey!",
@@ -451,21 +422,17 @@ def is_greeting(query: str) -> bool:
 
 # ====================== Answer Extraction ======================
 def extract_answer(response_text: str) -> str:
-    """Extract answer from LLM response (remove thinking process)"""
     import re
-    # Try to extract content inside <Answer> tags
     pattern = r"<Answer>\s*(.*?)(?:</Answer>|$)"
     match = re.search(pattern, response_text, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
 
-    # Try to extract content after "Answer:"
     pattern2 = r"Answer:\s*(.*?)(?:\n\n|$)"
     match2 = re.search(pattern2, response_text, re.DOTALL | re.IGNORECASE)
     if match2:
         return match2.group(1).strip()
 
-    # Return original response if no tags found
     return response_text.strip()
 
 
@@ -475,7 +442,6 @@ if __name__ == "__main__":
     print("RAG Engine Test")
     print("=" * 50)
 
-    # Test API connection
     print("\n📡 Testing API connection...")
     test_response = complete_document_sdk(prompt="Say 'Hello, HKBU!'", temperature=1.0)
 
@@ -490,5 +456,4 @@ if __name__ == "__main__":
         print("2. API_BASE_URL is correct")
         print("3. Network can access school API")
 
-    # Show loaded documents
     print(f"\n📚 Loaded {len(documents)} documents, {len(nodes)} chunks")
