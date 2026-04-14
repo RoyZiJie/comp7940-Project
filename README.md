@@ -127,37 +127,25 @@ source venv/bin/activate
 
 pip install -r requirements.txt
 
-# Telegram Bot Configuration
+# Environment Variables Configuration
+Create a `.env` file in the project root directory with the following content:
+
+# Telegram Bot Token
 TELEGRAM_TOKEN=your_telegram_bot_token_here
 
 # HKBU GenAI Platform API Configuration
-API_KEY=your_hkbu_api_key_here
+API_KEY=your_api_key_here
 API_BASE_URL=https://genai.hkbu.edu.hk/api/v0/rest
 MODEL=gpt-5
 API_VERSION=2024-12-01-preview
 
-# PostgreSQL Database Configuration
-DB_HOST=localhost
+# AWS RDS Database Configuration
+DB_HOST=your_rds_endpoint_or_ip_here
 DB_PORT=5432
-DB_NAME=hkbu_bot
+DB_NAME=postgres
 DB_USER=bot_user
-DB_PASSWORD=your_password_here
+DB_PASSWORD=your_database_password_here
 
-# Create data directory if not exists
-mkdir -p data
-
-# Add your PDF files
-cp /path/to/your/course_pdfs/*.pdf data/
-
-# Using Docker
-docker run -d \
-  --name postgres-test \
-  -e POSTGRES_USER=bot_user \
-  -e POSTGRES_PASSWORD=bot_password \
-  -e POSTGRES_DB=hkbu_bot \
-  -p 5432:5432 \
-  postgres:15-alpine
-  
 # Run the bot
 python bot.py
 
@@ -188,8 +176,47 @@ comp7940-Project/
 ├── .gitignore                  # Git ignore rules
 ├── README.md                   # Project documentation
 └── LICENSE                     # MIT License
-
 ```
+## ☁️ Deployment Architecture
+
+### Deploy with Docker (Local)
+
+#### 1. Login to GitHub Container Registry
+
+```bash
+docker login ghcr.io -u YOUR_GITHUB_USERNAME -p YOUR_PERSONAL_ACCESS_TOKEN
+```
+#### 2. Pull the Docker image
+
+```bash
+docker pull ghcr.io/royzijie/comp7940-project:latest
+```
+#### 3. Run the container
+```bash
+docker run -d --name hkbu-buddy  --env-file .env ghcr.io/royzijie/comp7940-project:latest
+```
+#### 4. Verify the container is running
+```bash
+docker ps
+docker logs hkbu-buddy
+```
+#### 5. Test the bot
+
+Open Telegram and send a message to @HKBU_buddy_bot
+
+### Deploy to AWS EC2 (Cloud)
+This project is deployed on AWS EC2 for 24/7 cloud hosting.
+```bash
+# SSH to EC2
+ssh -i your-key.pem ubuntu@your-ec2-public-ip
+
+# Pull and run
+docker pull ghcr.io/royzijie/comp7940-project:latest
+docker rm -f hkbu-buddy
+docker run -d --name hkbu-buddy --restart unless-stopped --env-file .env ghcr.io/royzijie/comp7940-project:latest
+docker logs hkbu-buddy
+```
+
 ## 👥 Team Information
 
 ---

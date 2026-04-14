@@ -14,10 +14,55 @@ API_BASE_URL = os.getenv("API_BASE_URL", "https://genai.hkbu.edu.hk/api/v0/rest"
 MODEL = os.getenv("MODEL", "gpt-5")
 API_VERSION = os.getenv("API_VERSION", "2024-12-01-preview")
 
+# SerpAPI Configuration (for web search)
+SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")
+
 CHUNK_SIZE = 512
 CHUNK_OVERLAP = 128
 STORAGE_DIR = "./storage"
 DATA_DIR = "./data"
+
+
+# ====================== Web Search Function ======================
+def search_web(query: str, max_results: int = 3) -> str:
+    """Search the web using SerpAPI Google Search"""
+    if not SERPAPI_KEY:
+        return None
+
+    try:
+        params = {
+            "q": query,
+            "api_key": SERPAPI_KEY,
+            "engine": "google",
+            "num": max_results
+        }
+
+        response = requests.get(
+            "https://serpapi.com/search",
+            params=params,
+            timeout=15
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            results = []
+
+            for item in data.get("organic_results", [])[:max_results]:
+                title = item.get("title", "")
+                snippet = item.get("snippet", "")
+                link = item.get("link", "")
+
+                if snippet:
+                    results.append(f"**{title}**\n{snippet}\nSource: {link}")
+
+            if results:
+                return "🌐 **Internet Search Results:**\n\n" + "\n\n---\n\n".join(results)
+
+        return None
+
+    except Exception as e:
+        print(f"Web search failed: {e}")
+        return None
 
 
 # ====================== Document Loading & Chunking ======================
@@ -92,75 +137,106 @@ nodes = chunk_documents(documents)
 def extract_course_codes(text: str) -> List[str]:
     """Extract course codes like COMP7430, COMP 7430, COMP-7430 from text"""
     course_codes = []
-    # Pattern for COMP followed by 4 digits (with optional space/hyphen/underscore)
     patterns = [
-        r'COMP\s*(\d{4})',  # COMP7430 or COMP 7430
-        r'COMP[-_]\s*(\d{4})',  # COMP-7430 or COMP_7430
-        r'comp\s*(\d{4})',  # comp7430 (lowercase)
+        r'COMP\s*(\d{4})',
+        r'COMP[-_]\s*(\d{4})',
+        r'comp\s*(\d{4})',
     ]
     for pattern in patterns:
         matches = re.findall(pattern, text, re.IGNORECASE)
         for match in matches:
-            # Add various formats
             course_codes.append(f"COMP{match}")
             course_codes.append(f"comp{match}")
             course_codes.append(f"COMP-{match}")
             course_codes.append(f"COMP {match}")
-    return list(set(course_codes))  # Remove duplicates
+    return list(set(course_codes))
+
+
+def extract_professor_keywords(text: str) -> List[str]:
+    """Extract professor-related keywords from query"""
+    keywords = []
+    text_lower = text.lower()
+
+    professor_patterns = [
+        r'who\s+is\s+teaching',
+        r'who\s+teaches',
+        r'instructor',
+        r'professor',
+        r'prof\.',
+        r'dr\.',
+        r'teaching\s+staff',
+        r'faculty'
+    ]
+
+    for pattern in professor_patterns:
+        if re.search(pattern, text_lower):
+            keywords.append('professor')
+            keywords.append('instructor')
+            keywords.append('teaching staff')
+
+    return list(set(keywords))
 
 
 def retrieve_context(
         nodes: List,
         query: str,
         method: str = "keyword",
-        top_k: int = 5
+        top_k: int = 5,
+        use_web_search: bool = True
 ) -> List[Dict]:
-    """Retrieve relevant document chunks based on keyword matching with course code extraction"""
-    if not nodes:
-        return []
+    """Retrieve relevant document chunks - combines local + web search results"""
+    results = []
 
-    # Extract course codes from query
-    course_codes = extract_course_codes(query)
+    # 1. Try to get results from local documents
+    if nodes:
+        course_codes = extract_course_codes(query)
+        professor_keywords = extract_professor_keywords(query)
+        query_words = set(query.lower().split())
 
-    # Split query into keywords
-    query_words = set(query.lower().split())
+        for code in course_codes:
+            query_words.add(code.lower())
+            num_match = re.search(r'(\d{4})', code)
+            if num_match:
+                query_words.add(num_match.group(1))
 
-    # Add course codes as keywords (in various formats)
-    for code in course_codes:
-        query_words.add(code.lower())
-        # Also add just the number part
-        num_match = re.search(r'(\d{4})', code)
-        if num_match:
-            query_words.add(num_match.group(1))
+        for kw in professor_keywords:
+            query_words.add(kw)
 
-    # Filter common stop words
-    stop_words = {"的", "了", "是", "在", "我", "有", "和", "就", "不", "也", "都", "说",
-                  "a", "an", "the", "is", "are", "was", "were", "to", "of", "and", "or",
-                  "in", "on", "at", "for", "with", "by", "tell", "me", "more", "about",
-                  "what", "can", "you", "please", "course", "courses"}
-    query_words = query_words - stop_words
+        stop_words = {"的", "了", "是", "在", "我", "有", "和", "就", "不", "也", "都", "说",
+                      "a", "an", "the", "is", "are", "was", "were", "to", "of", "and", "or",
+                      "in", "on", "at", "for", "with", "by", "tell", "me", "more", "about",
+                      "what", "can", "you", "please", "course", "courses"}
+        query_words = query_words - stop_words
 
-    if not query_words:
-        return []
+        if query_words:
+            scored_nodes = []
+            for node in nodes:
+                content_lower = node["content"].lower()
+                score = 0
+                for word in query_words:
+                    if word in content_lower:
+                        score += 1
+                if score > 0:
+                    scored_nodes.append((score, node))
 
-    # Calculate match score for each chunk
-    scored_nodes = []
-    for node in nodes:
-        content_lower = node["content"].lower()
-        score = 0
-        for word in query_words:
-            if word in content_lower:
-                score += 1
-        if score > 0:
-            scored_nodes.append((score, node))
+            scored_nodes.sort(key=lambda x: x[0], reverse=True)
+            local_results = [node for score, node in scored_nodes[:top_k]]
 
-    # Sort by score and take top_k
-    scored_nodes.sort(key=lambda x: x[0], reverse=True)
-    results = [node for score, node in scored_nodes[:top_k]]
+            if local_results:
+                results.extend(local_results)
+                print(f"📚 Retrieved {len(local_results)} relevant chunks from local documents")
 
-    print(f"🔍 Retrieved {len(results)} relevant chunks (keywords: {list(query_words)[:10]}...)")
-    if course_codes:
-        print(f"📚 Extracted course codes: {course_codes}")
+    # 2. Also try web search (even if local results found)
+    if use_web_search and SERPAPI_KEY:
+        print(f"🌐 Also fetching web search results for: {query}")
+        web_results = search_web(query)
+        if web_results:
+            results.append({
+                "file_name": "Internet Search",
+                "content": web_results
+            })
+            print(f"🌐 Added web search results")
+
     return results
 
 
@@ -205,10 +281,8 @@ History: {history}
 Question: {query}
 Standalone Question:"""
 
-    # Changed temperature from 0.0 to 1.0
     res = complete_document_sdk(prompt=prompt, temperature=1.0)
     rewritten = res["response"].strip()
-    # Clean up newlines
     rewritten = rewritten.split('\n')[0] if '\n' in rewritten else rewritten
     return rewritten if rewritten else query, res
 
@@ -218,7 +292,7 @@ def complete_document_sdk(
         prompt: str,
         model: str = None,
         num_predict: int = 2048,
-        temperature: float = 1.0,  # Changed from 0.0 to 1.0
+        temperature: float = 1.0,
         stop_sequences: List[str] = None,
         stream_callback=None
 ) -> Dict[str, Any]:
@@ -234,28 +308,24 @@ def complete_document_sdk(
 
     model_name = model or MODEL
 
-    # Build request URL - using /deployments/ (not /openai/deployments/)
     url = f"{API_BASE_URL}/deployments/{model_name}/chat/completions?api-version={API_VERSION}"
 
-    # Use api-key header (not Bearer)
     headers = {
         "api-key": API_KEY,
         "Content-Type": "application/json"
     }
 
-    # Request body - no 'model' field needed (model is in URL)
     data = {
         "messages": [
             {"role": "system",
              "content": "You are a helpful HKBU study assistant. Answer based on the provided context."},
             {"role": "user", "content": prompt}
         ],
-        "temperature": temperature,  # Now 1.0
+        "temperature": temperature,
         "max_tokens": num_predict,
         "stream": False
     }
 
-    # Add stop sequences if provided
     if stop_sequences:
         data["stop"] = stop_sequences
 
@@ -272,7 +342,6 @@ def complete_document_sdk(
         if response.status_code == 200:
             result = response.json()
 
-            # Parse response (OpenAI compatible format)
             if "choices" in result and len(result["choices"]) > 0:
                 content = result["choices"][0]["message"]["content"]
             else:
@@ -280,7 +349,6 @@ def complete_document_sdk(
 
             usage = result.get("usage", {})
 
-            # Stream callback if enabled
             if stream_callback:
                 stream_callback(content)
 
@@ -330,23 +398,19 @@ class ConversationManager:
         self.history = []
 
     def add_message(self, role: str, content: str):
-        """Add a message to history"""
         self.history.append({"role": role, "content": content})
 
     def get_history_string(self, max_turns: int = 4):
-        """Get history string for prompt"""
-        recent = self.history[-max_turns * 2:]  # User + assistant = 1 turn
+        recent = self.history[-max_turns * 2:]
         return "\n".join([f"{item['role']}: {item['content']}" for item in recent])
 
     def clear_history(self):
-        """Clear conversation history"""
         self.history = []
         print("🧹 Conversation history cleared")
 
 
 # ====================== Greeting Detection ======================
 def is_greeting(query: str) -> bool:
-    """Check if the query is a greeting"""
     q = query.strip().lower()
     greetings = {
         "hi", "hello", "hey", "hi!", "hello!", "hey!",
@@ -358,21 +422,17 @@ def is_greeting(query: str) -> bool:
 
 # ====================== Answer Extraction ======================
 def extract_answer(response_text: str) -> str:
-    """Extract answer from LLM response (remove thinking process)"""
     import re
-    # Try to extract content inside <Answer> tags
     pattern = r"<Answer>\s*(.*?)(?:</Answer>|$)"
     match = re.search(pattern, response_text, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
 
-    # Try to extract content after "Answer:"
     pattern2 = r"Answer:\s*(.*?)(?:\n\n|$)"
     match2 = re.search(pattern2, response_text, re.DOTALL | re.IGNORECASE)
     if match2:
         return match2.group(1).strip()
 
-    # Return original response if no tags found
     return response_text.strip()
 
 
@@ -382,9 +442,7 @@ if __name__ == "__main__":
     print("RAG Engine Test")
     print("=" * 50)
 
-    # Test API connection
     print("\n📡 Testing API connection...")
-    # Changed temperature from 0.0 to 1.0
     test_response = complete_document_sdk(prompt="Say 'Hello, HKBU!'", temperature=1.0)
 
     if test_response.get("response") and "Error" not in test_response["response"]:
@@ -398,5 +456,4 @@ if __name__ == "__main__":
         print("2. API_BASE_URL is correct")
         print("3. Network can access school API")
 
-    # Show loaded documents
     print(f"\n📚 Loaded {len(documents)} documents, {len(nodes)} chunks")

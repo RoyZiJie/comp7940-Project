@@ -250,8 +250,13 @@ async def handle_message(update: Update, context):
         conv_manager = conversation_managers[user_id]
         history_str = conv_manager.get_history_string()
 
-        # Check if it's a greeting
-        if is_greeting(user_input):
+        # Check if it's a greeting - but NOT if it contains course-related keywords
+        course_keywords = ['comp', 'course', 'class', 'lecture', 'professor', 'teaching', 'instructor', 'what is',
+                           'tell me about']
+        is_real_greeting = is_greeting(user_input)
+
+        # Don't treat as greeting if it contains course-related terms
+        if is_real_greeting and not any(keyword in user_input.lower() for keyword in course_keywords):
             answer = "Hello! How can I assist you with your studies today?"
             conv_manager.add_message("User", user_input)
             conv_manager.add_message("Assistant", answer)
@@ -263,12 +268,13 @@ async def handle_message(update: Update, context):
             await update.message.reply_text(answer)
             return
 
-        # 1. Retrieve relevant context from documents
+        # 1. Retrieve relevant context from documents (with web search fallback)
         retrieval_context = retrieve_context(
             nodes=nodes,
             query=user_input,
             method="keyword",
-            top_k=5
+            top_k=5,
+            use_web_search=True  # 启用联网搜索
         )
 
         # Build context string
@@ -278,10 +284,15 @@ async def handle_message(update: Update, context):
                 f"[Source: {item.get('file_name', 'unknown')}]\n{item.get('content', '')}"
                 for item in retrieval_context
             ])
-            sources = list(set([item.get('file_name', 'unknown') for item in retrieval_context[:3]]))
-            print(f"📚 Retrieved {len(retrieval_context)} relevant chunks")
+            # Check if this is from web search
+            if len(retrieval_context) == 1 and retrieval_context[0].get('file_name') == "Internet Search":
+                sources = ["Web Search"]
+                print(f"🌐 Retrieved {len(retrieval_context)} web search results")
+            else:
+                sources = list(set([item.get('file_name', 'unknown') for item in retrieval_context[:3]]))
+                print(f"📚 Retrieved {len(retrieval_context)} relevant chunks")
         else:
-            context_str = "No relevant documents found. Answer based on your knowledge."
+            context_str = "No relevant documents found."
             print("📚 No relevant documents found")
 
         # 2. Generate prompt
@@ -292,13 +303,23 @@ async def handle_message(update: Update, context):
             use_cot=True
         )
 
-        # 3. Call LLM API - temperature must be 1.0 for GPT-5
-        response = complete_document_sdk(
-            prompt=prompt,
-            temperature=1.0
-        )
+        # 3. Call LLM API with timeout
+        try:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(complete_document_sdk, prompt=prompt, temperature=1.0),
+                timeout=30.0
+            )
+        except asyncio.TimeoutError:
+            await update.message.reply_text(
+                "⏰ The request is taking too long. Please try again in a moment."
+            )
+            return
 
         answer = extract_answer(response.get("response", ""))
+
+        # If answer is empty or too short, provide fallback
+        if not answer or len(answer) < 10:
+            answer = f"Sorry, I couldn't find specific information about '{user_input}'. Please try rephrasing your question or ask about HKBU courses and professors."
 
         # Save conversation history
         conv_manager.add_message("User", user_input)
@@ -308,15 +329,14 @@ async def handle_message(update: Update, context):
         await save_session(user_id, conv_manager.history)
         await save_chat_log(user_id, user_input, answer, ", ".join(sources) if sources else None)
 
-        # Show sources if available
-        if sources:
+        # Show sources if available (don't show for web search as it's already in context)
+        if sources and "Web Search" not in sources:
             answer += f"\n\n📖 *Sources:* {', '.join(sources)}"
 
         # Send reply - try Markdown first, fallback to plain text
         try:
             await update.message.reply_text(answer, parse_mode="Markdown")
-        except Exception as e:
-            print(f"Markdown parse error: {e}, sending plain text")
+        except Exception:
             await update.message.reply_text(answer)
 
     except Exception as e:
