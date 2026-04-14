@@ -235,6 +235,9 @@ async def handle_message(update: Update, context):
     # Send "typing" indicator
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
+    # Send searching indicator
+    status_msg = await update.message.reply_text("🔍 Searching HKBU documents and web...")
+
     try:
         # Try to load session from database first
         db_history = await load_session(user_id)
@@ -265,6 +268,7 @@ async def handle_message(update: Update, context):
             await save_session(user_id, conv_manager.history)
             await save_chat_log(user_id, user_input, answer, None)
 
+            await status_msg.delete()
             await update.message.reply_text(answer)
             return
 
@@ -273,8 +277,8 @@ async def handle_message(update: Update, context):
             nodes=nodes,
             query=user_input,
             method="keyword",
-            top_k=5,
-            use_web_search=True  # 启用联网搜索
+            top_k=3,  # Reduced from 5 to 3 for faster response
+            use_web_search=True
         )
 
         # Build context string
@@ -287,9 +291,11 @@ async def handle_message(update: Update, context):
             # Check if this is from web search
             if len(retrieval_context) == 1 and retrieval_context[0].get('file_name') == "Internet Search":
                 sources = ["Web Search"]
+                await status_msg.edit_text("🌐 Searching the web...")
                 print(f"🌐 Retrieved {len(retrieval_context)} web search results")
             else:
                 sources = list(set([item.get('file_name', 'unknown') for item in retrieval_context[:3]]))
+                await status_msg.edit_text("📚 Analyzing documents...")
                 print(f"📚 Retrieved {len(retrieval_context)} relevant chunks")
         else:
             context_str = "No relevant documents found."
@@ -303,15 +309,17 @@ async def handle_message(update: Update, context):
             use_cot=True
         )
 
-        # 3. Call LLM API with timeout
+        # 3. Call LLM API with increased timeout
         try:
+            await status_msg.edit_text("🤖 Generating response with GPT-5...")
             response = await asyncio.wait_for(
                 asyncio.to_thread(complete_document_sdk, prompt=prompt, temperature=1.0),
-                timeout=30.0
+                timeout=45.0  # Increased from 30 to 45 seconds
             )
         except asyncio.TimeoutError:
-            await update.message.reply_text(
-                "⏰ The request is taking too long. Please try again in a moment."
+            await status_msg.edit_text(
+                "⏰ The request is taking too long. Please try again later.\n\n"
+                "💡 Tip: Try asking about specific HKBU courses (e.g., COMP7940) or professors."
             )
             return
 
@@ -333,6 +341,9 @@ async def handle_message(update: Update, context):
         if sources and "Web Search" not in sources:
             answer += f"\n\n📖 *Sources:* {', '.join(sources)}"
 
+        # Delete status message and send answer
+        await status_msg.delete()
+
         # Send reply - try Markdown first, fallback to plain text
         try:
             await update.message.reply_text(answer, parse_mode="Markdown")
@@ -341,6 +352,7 @@ async def handle_message(update: Update, context):
 
     except Exception as e:
         print(f"Error: {e}")
+        await status_msg.delete()
         await update.message.reply_text(
             "❌ Sorry, an error occurred while processing your request. Please try again later.\n\n"
             "If the problem persists, try using /clear to clear history."

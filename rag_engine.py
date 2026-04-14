@@ -22,12 +22,21 @@ CHUNK_OVERLAP = 128
 STORAGE_DIR = "./storage"
 DATA_DIR = "./data"
 
+# Simple cache for web search results
+_search_cache = {}
+
 
 # ====================== Web Search Function ======================
-def search_web(query: str, max_results: int = 3) -> str:
-    """Search the web using SerpAPI Google Search"""
+def search_web(query: str, max_results: int = 2) -> str:
+    """Search the web using SerpAPI Google Search with caching"""
     if not SERPAPI_KEY:
         return None
+
+    # Check cache
+    cache_key = query.lower().strip()
+    if cache_key in _search_cache:
+        print(f"🌐 Using cached web search for: {query}")
+        return _search_cache[cache_key]
 
     try:
         params = {
@@ -40,7 +49,7 @@ def search_web(query: str, max_results: int = 3) -> str:
         response = requests.get(
             "https://serpapi.com/search",
             params=params,
-            timeout=15
+            timeout=10  # Reduced from 15 to 10 seconds
         )
 
         if response.status_code == 200:
@@ -56,7 +65,10 @@ def search_web(query: str, max_results: int = 3) -> str:
                     results.append(f"**{title}**\n{snippet}\nSource: {link}")
 
             if results:
-                return "🌐 **Internet Search Results:**\n\n" + "\n\n---\n\n".join(results)
+                output = "🌐 **Internet Search Results:**\n\n" + "\n\n---\n\n".join(results)
+                # Cache results
+                _search_cache[cache_key] = output
+                return output
 
         return None
 
@@ -181,7 +193,7 @@ def retrieve_context(
         nodes: List,
         query: str,
         method: str = "keyword",
-        top_k: int = 5,
+        top_k: int = 3,  # Reduced from 5 to 3
         use_web_search: bool = True
 ) -> List[Dict]:
     """Retrieve relevant document chunks - combines local + web search results"""

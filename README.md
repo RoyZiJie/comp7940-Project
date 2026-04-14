@@ -9,7 +9,7 @@
 ![AWS](https://img.shields.io/badge/AWS-EC2%20%7C%20RDS-orange)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-**An intelligent HKBU campus assistant based on RAG technology, supporting course queries, professor information retrieval, campus facilities Q&A, and more**
+**An intelligent HKBU campus assistant based on RAG technology, supporting course queries, professor information retrieval, campus facilities Q&A, and real-time web search**
 
 [Try it on Telegram](https://t.me/HKBU_buddy_bot) | [Report Issue](https://github.com/RoyZiJie/comp7940-Project/issues)
 
@@ -23,13 +23,14 @@
 - [Features](#features)
 - [Technical Architecture](#technical-architecture)
 - [Quick Start](#quick-start)
+- [Deployment Architecture](#deployment-architecture)
 - [Team Information](#team-information)
 
 ---
 
 ## 🎓 Project Overview
 
-**HKBU Buddy** is an intelligent campus assistant Telegram bot designed specifically for Hong Kong Baptist University (HKBU). Built on RAG (Retrieval-Augmented Generation) technology, it retrieves information from 97+ course documents and professor profiles, combining it with the GPT-5 large language model to provide accurate and timely campus information for HKBU students and faculty.
+**HKBU Buddy** is an intelligent campus assistant Telegram bot designed specifically for Hong Kong Baptist University (HKBU). Built on RAG (Retrieval-Augmented Generation) technology with integrated web search capabilities, it retrieves information from 97+ course documents and professor profiles, while also fetching real-time information from the web, combining everything with the GPT-5 large language model to provide accurate, timely, and comprehensive campus information for HKBU students and faculty.
 
 ### Core Value
 
@@ -37,10 +38,11 @@
 - 👨‍🏫 **Professor Information**: Research areas, contact information, office locations
 - 🏫 **Campus Facilities**: Library hours, cafeteria locations, building information
 - 📅 **Academic Calendar**: Important dates, exam schedules, registration deadlines
+- 🌐 **Real-time Information**: Weather, news, and latest updates via web search
 
 ### Problem Statement
 
-Students at HKBU often struggle to find accurate course information, professor details, and campus facility schedules due to scattered information sources. HKBU Buddy solves this by consolidating all information into a single, easy-to-use Telegram bot with AI-powered search capabilities.
+Students at HKBU often struggle to find accurate course information, professor details, and campus facility schedules due to scattered information sources. HKBU Buddy solves this by consolidating all information into a single, easy-to-use Telegram bot with AI-powered search capabilities and real-time web search.
 
 ---
 
@@ -56,10 +58,12 @@ Students at HKBU often struggle to find accurate course information, professor d
 | **Campus Facilities** | Library, cafeteria, building info | "When does the library open?" |
 | **Conversation History** | Remembers previous questions | Follow-up questions supported |
 | **Usage Statistics** | Track personal usage | "/stats" command |
+| **Web Search** | Real-time information from the internet | "What's the weather in Hong Kong?" |
 
 ### Technical Features
 
 - ✅ **RAG Technology**: Intelligent retrieval from 97+ PDF documents (1155 chunks)
+- ✅ **Web Search Integration**: SerpAPI (Google Search) for real-time information
 - ✅ **GPT-5 Integration**: Powered by HKBU GenAI Platform GPT-5 API
 - ✅ **PostgreSQL Database**: Persistent chat history and session storage
 - ✅ **Docker Containerization**: One-command deployment, consistent environment
@@ -78,9 +82,19 @@ Students at HKBU often struggle to find accurate course information, professor d
 
 ---
 
+
 ## 🏗️ Technical Architecture
 
-### Architecture Diagram
+### Data Flow
+
+1. User sends message via Telegram `@HKBU_buddy_bot`
+2. RAG Engine performs **dual retrieval**:
+   - Local keyword search across 97 HKBU PDF documents
+   - Web search via SerpAPI (Google Search) for real-time information
+3. Combined context is sent to **HKBU GenAI GPT-5 API**
+4. GPT-5 generates natural language response
+5. Response is logged to **AWS RDS PostgreSQL** (`chat_logs`, `user_sessions`)
+6. Final answer is sent back to user via Telegram
 
 ### Technology Stack
 
@@ -88,7 +102,8 @@ Students at HKBU often struggle to find accurate course information, professor d
 |----------|------------|---------|-------------|
 | **Language** | Python | 3.11 | Primary development language |
 | **Bot Framework** | python-telegram-bot | 22.7 | Telegram Bot API wrapper |
-| **RAG Engine** | PyPDF2 + Custom Keyword | 3.0+ | PDF parsing and intelligent retrieval |
+| **Local RAG** | PyPDF2 + Custom Keyword | 3.0+ | PDF parsing and local retrieval |
+| **Web Search** | SerpAPI (Google Search) | - | Real-time web search integration |
 | **LLM API** | HKBU GenAI Platform GPT-5 | - | Large language model interface |
 | **Database** | PostgreSQL | 15 | Chat log and session storage |
 | **Database Driver** | asyncpg | 0.29+ | Async PostgreSQL driver |
@@ -98,7 +113,6 @@ Students at HKBU often struggle to find accurate course information, professor d
 | **Cloud - Database** | AWS RDS | db.t4g.micro | Managed PostgreSQL |
 
 ---
-
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -107,6 +121,7 @@ Students at HKBU often struggle to find accurate course information, professor d
 - Docker (optional, for containerized deployment)
 - Telegram account
 - HKBU GenAI Platform API Key
+- SerpAPI Key (optional, for web search)
 - PostgreSQL (optional, for local database)
 
 ### Local Development Setup
@@ -146,6 +161,9 @@ DB_NAME=postgres
 DB_USER=bot_user
 DB_PASSWORD=your_database_password_here
 
+# SerpAPI Web Search (optional)
+SERPAPI_KEY=your_serpapi_key_here
+
 # Run the bot
 python bot.py
 
@@ -156,7 +174,6 @@ python bot.py
 🤖 HKBU Buddy Telegram Bot started...
 📱 Search for @HKBU_buddy_bot on Telegram to start using
 
-📁 Project Structure
 comp7940-Project/
 ├── .github/
 │   └── workflows/
@@ -168,14 +185,12 @@ comp7940-Project/
 │   └── msc_booklet.pdf
 ├── storage/                    # Vector index storage (auto-generated)
 ├── bot.py                      # Main Telegram bot application
-├── rag_engine.py               # RAG engine with PDF processing
+├── rag_engine.py               # RAG engine with PDF processing + web search
 ├── requirements.txt            # Python dependencies
 ├── Dockerfile                  # Docker container configuration
-├── docker-compose.yml          # Multi-container orchestration
 ├── .env                        # Environment variables (not committed)
 ├── .gitignore                  # Git ignore rules
 ├── README.md                   # Project documentation
-└── LICENSE                     # MIT License
 ```
 ## ☁️ Deployment Architecture
 
