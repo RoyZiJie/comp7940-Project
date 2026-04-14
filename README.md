@@ -142,9 +142,6 @@ source venv/bin/activate
 
 pip install -r requirements.txt
 
-# Environment Variables Configuration
-Create a `.env` file in the project root directory with the following content:
-
 # Telegram Bot Token
 TELEGRAM_TOKEN=your_telegram_bot_token_here
 
@@ -160,6 +157,9 @@ DB_PORT=5432
 DB_NAME=postgres
 DB_USER=bot_user
 DB_PASSWORD=your_database_password_here
+
+# SerpAPI Web Search (optional)
+SERPAPI_KEY=your_serpapi_key_here
 
 # Run the bot
 python bot.py
